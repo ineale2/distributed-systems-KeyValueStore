@@ -1,11 +1,12 @@
 /**********************************
- * FILE NAME: MP1Node.cpp
- *
+ FILE NAME: MP1Node.cpp
+ * 
  * DESCRIPTION: Membership protocol run by this Node.
  * 				Definition of MP1Node class functions.
  **********************************/
 
 #include "MP1Node.h"
+#include <list>
 
 /*
  * Note: You can change/add any functions in MP1Node.{h,cpp}
@@ -25,6 +26,7 @@ MP1Node::MP1Node(Member *member, Params *params, EmulNet *emul, Log *log, Addres
 	this->log = log;
 	this->par = params;
 	this->memberNode->addr = *address;
+	this->dbTimer = 0;
 }
 
 /**
@@ -93,11 +95,6 @@ void MP1Node::nodeStart(char *servaddrstr, short servport) {
  * DESCRIPTION: Find out who I am and start up
  */
 int MP1Node::initThisNode(Address *joinaddr) {
-	/*
-	 * This function is partially implemented and may require changes
-	 */
-	int id = *(int*)(&memberNode->addr.addr);
-	int port = *(short*)(&memberNode->addr.addr[4]);
 
 	memberNode->bFailed = false;
 	memberNode->inited = true;
@@ -118,7 +115,7 @@ int MP1Node::initThisNode(Address *joinaddr) {
  * DESCRIPTION: Join the distributed system
  */
 int MP1Node::introduceSelfToGroup(Address *joinaddr) {
-	MessageHdr *msg;
+	msgTypes *msg;
 #ifdef DEBUGLOG
     static char s[1024];
 #endif
@@ -129,15 +126,15 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
         log->LOG(&memberNode->addr, "Starting up group...");
 #endif
         memberNode->inGroup = true;
+		writeDeltaBuff(memberNode->addr.getAddress(), JOINED);
     }
     else {
-        size_t msgsize = sizeof(MessageHdr) + sizeof(joinaddr->addr) + sizeof(long) + 1;
-        msg = (MessageHdr *) malloc(msgsize * sizeof(char));
+        size_t msgsize = sizeof(msgTypes) + sizeof(joinaddr->addr) + 1;
+        msg = (msgTypes*) malloc(msgsize * sizeof(char));
 
         // create JOINREQ message: format of data is {struct Address myaddr}
-        msg->msgType = JOINREQ;
+        *msg = JOINREQ;
         memcpy((char *)(msg+1), &memberNode->addr.addr, sizeof(memberNode->addr.addr));
-        memcpy((char *)(msg+1) + 1 + sizeof(memberNode->addr.addr), &memberNode->heartbeat, sizeof(long));
 
 #ifdef DEBUGLOG
         sprintf(s, "Trying to join...");
@@ -160,9 +157,10 @@ int MP1Node::introduceSelfToGroup(Address *joinaddr) {
  * DESCRIPTION: Wind up this node and clean up state
  */
 int MP1Node::finishUpThisNode(){
-   /*
-    * Your code goes here
-    */
+
+	delete memberNode;
+
+	return 0;
 }
 
 /**
@@ -209,15 +207,283 @@ void MP1Node::checkMessages() {
     return;
 }
 
+Address MP1Node::processJOINREQ(char* mIn){
+	Address addr;
+
+	// Get address of sender from message
+	memcpy(&addr, mIn+sizeof(msgTypes), sizeof(addr));
+ 
+	// Update delta buffer and membership map with a new process
+	writeDeltaBuff(addr, JOINED);
+
+	return addr;
+}
+
+char* MP1Node::createJOINREP(size_t* msgSize){
+
+	// Allocate a message large enough for all the known nodes
+	long id, port;
+	int numNodes = memberMap.size();
+	*msgSize = sizeof(msgTypes) + sizeof(long)*2*numNodes;
+	char* mOut = (char*)malloc(*msgSize);
+
+	// Set the message type
+	mOut[0]  = (char)JOINREP;
+
+	// Fill out the message with the port & ID of all known nodes
+	auto it = memberMap.begin();
+	long* nodeData  = (long*)(mOut + sizeof(msgTypes));
+	for(int c = 0 ; it != memberMap.end() ; it++){
+		// Decompose address string into id and port
+		decomposeAddr(it->first, &id, &port);
+
+		// Put data into the message
+		nodeData[c++] = id;
+		nodeData[c++] = port;
+	}
+	return mOut;
+
+}
+
+void MP1Node::processJOINREP(char* mIn, int size){
+
+	long* data = (long*)(mIn + sizeof(msgTypes));
+	int numNodes = (size - sizeof(msgTypes))/(2*sizeof(long));
+	int id;
+	short port;
+	Address addr;
+	// Create an empty entry to be added for various messages
+	nodeData newEntry = nodeData(); //Default Constructor: NOT_SUSPECTED, NOT_PINGED, zero sequence numbers;
+	// Create a vector from the message recieved from introducer
+	for(int i = 0; i < numNodes*2; ){
+		id   = (int)data[i++];
+		port = (short)data[i++];
+	
+		// Create an Address so it can be added to the grading log
+		memcpy(&addr.addr[0], &id,   sizeof(int));
+		memcpy(&addr.addr[4], &port, sizeof(short));
+		memberMap[addr.getAddress()] = newEntry;
+		log->logNodeAdd(&memberNode->addr, &addr);
+	}
+	// Mark yourself as in the group
+	memberNode->inGroup = true;
+
+	// Init timer
+	dbTimer = 0;	
+
+	// Tell everyone you've joined!
+	writeDeltaBuff(memberNode->addr.getAddress(), JOINED);	
+	
+}
+
+Address MP1Node::processMessage(msg* mIn){
+	// Update membership list based on message in data
+	writeDeltaBuff(mIn->dbAddr, mIn->gossipType);	
+
+	return mIn->sender;
+}
+
+msg* MP1Node::createMessage(msgTypes msgType){
+
+	// Grab an address from recent change buffer 
+	dbTypes db_type;
+	Address db_addr = readDeltaBuff(&db_type);	
+
+	// Create the message
+	msg* mOut = new msg(msgType, memberNode->addr, db_type, db_addr); 
+
+	return mOut;
+}
+
+Address MP1Node::readDeltaBuff(dbTypes* type){
+
+	// Only gossip about events whose nodes have the same sequence number as when pushed into deltaBuff
+	while(true){
+		// If the delta buffer is empty, then return empty and a dummy address
+		if(deltaBuff.empty()){
+			*type = EMPTY;
+			return memberNode->addr;
+		}
+		// Reset iterator if end was reached
+		if(dbit == deltaBuff.end()){
+			dbit = deltaBuff.begin();
+		}
+		//Make sure not to dereference garbage iterator
+		auto it = memberMap.find(dbit->addr);
+		if(it == memberMap.end() || dbit->dbseq != it->second.dbseq){
+			dbit = deltaBuff.erase(dbit);
+		}
+		else{
+			break;
+		}
+	}
+	
+	Address addr(dbit->addr); 
+	*type = dbit->dbType;
+
+	// Increment iterator
+	dbit++;
+	return addr;
+}
+
+void MP1Node::writeDeltaBuff(Address addr, dbTypes type){
+	 
+	long currTime = par->getcurrtime();
+	string a = addr.getAddress();
+	// Find if this node is in the map
+	auto it = memberMap.find(a);
+	// Update grading log and membership map
+	bool newEvent = false;
+	if(type == FAILED){
+		// If the node is in the map, write to grading log that the node has been removed, then remove it from map
+		if(it != memberMap.end() && memberMap[a].nstat != SUSPECTED){
+			
+			// Put this node in the queue of suspected processes
+			pair<string, long> newEntry(a, currTime + TREMOVE);
+			suspects.push_back(newEntry);
+
+			// Mark as suspected in memberMap to prevent duplicate addition
+			memberMap[a].nstat = SUSPECTED;
+			newEvent = true;
+		}
+		
+	}
+	else if(type == JOINED){
+		// If the node is not in the map, write to grading log that the node has joined, then add it to map
+		if(it == memberMap.end()){
+			log->logNodeAdd(&memberNode->addr, &addr);
+			//Default constructor has states of NOT_SUSPECTED and NOT_PINGED
+			memberMap[a] = nodeData();//NOT_SUSPECTED, NOT_PINGED, 0, 0, 0);
+			newEvent = true;
+			/* FOR MP2 need to use memberList to get data to MP2Node class... frustratingly inefficient */
+			addMember(addr);	
+				
+		}
+	} 
+	else if(type == REJUV){
+			//If the process is in the suspects queue, then search through suspects and remove
+			if(it != memberMap.end() && memberMap[a].nstat == SUSPECTED){
+				for(auto curr = suspects.begin(); curr != suspects.end(); ){
+					if(curr->first.compare(a) == 0){
+						// Erase from the suspects map, and mark it as having responded to (some other node's) ACK
+						curr = suspects.erase(curr);
+						memberMap[a].nstat  = NOT_SUSPECTED;
+						memberMap[a].pstat  = NOT_PINGED;
+						memberMap[a].pseq++;
+						// If the node still has this process in the suspects queue, then start gossiping about it
+						newEvent = true;
+					}
+					else{
+						// This handles the iterator being invalidated when erase is called
+						curr++;
+					}
+				}
+			}
+	}
+	else if(type == EMPTY){
+		// Sender process' delta buffer was empty, do nothing
+		return;
+	}
+	else{
+		cout << "writeDeltaBuff:: Invalid Argument: type = " << (int)type << " addr =  " << addr.getAddress() << endl;
+		throw std::invalid_argument("type not enumerated");		
+	}
+
+	// Update delta buffer if this is a new event to the process
+	if(newEvent){
+		// If the delta buffer is at capacity, remove an element before pushing
+		if(deltaBuff.size() >= DELTA_BUFF_SIZE){
+			deltaBuff.pop_back();	
+		}	
+		// Increment deltaBuffer sequence number
+		memberMap[a].dbseq++;
+
+		// Push new element into delta buffer
+		dbData dbe = dbData(a, type, memberMap[a].dbseq); 
+		deltaBuff.push_front(dbe);
+
+		// Reset the iterator
+		dbit = deltaBuff.begin();
+	}
+
+}
+
 /**
  * FUNCTION NAME: recvCallBack
  *
  * DESCRIPTION: Message handler for different message types
  */
 bool MP1Node::recvCallBack(void *env, char *data, int size ) {
-	/*
-	 * Your code goes here
-	 */
+
+	int time = par->getcurrtime();
+		
+	Address addr;
+	size_t msgSize;
+
+	// Get the message type, and switch on the message type
+	msg* mIn = (msg*)data;
+	msg* mOut;
+	switch(mIn->msgType){
+		case JOINREQ:
+		{
+		
+			// Add requesting node to membership list, then send full list
+			addr = processJOINREQ(data);
+
+			// Create JOINREP message, msgSize is modified with pass by reference
+			char* jrMsg = createJOINREP(&msgSize);
+
+			// Reply with the JOINREP message
+			emulNet->ENsend(&memberNode->addr, &addr, jrMsg, msgSize);
+			
+			//clean up memory
+			free(jrMsg);
+
+			break;
+		}	
+		case JOINREP:
+		{
+			// Create membership list based on the vector in the JOINREP message
+			processJOINREP(data, size);
+
+			break;
+		}
+		case PING:
+		{
+			// Update this nodes membership list based on the ping message
+			addr = processMessage(mIn);
+
+			// Create an ACK message and send it
+			mOut = createMessage(ACK);
+			emulNet->ENsend(&memberNode->addr, &addr, (char*)mOut, ACK_MSG_SIZE);
+			delete mOut;
+			
+			break;
+		}
+		case ACK:
+		{
+			// Update this nodes membership list based on ACK message
+			addr = processMessage(mIn);
+
+			// If this process is suspected to be failed, remove it from the suspects queue and send REJUV
+			if(memberMap[addr.getAddress()].nstat == SUSPECTED){
+				writeDeltaBuff(addr, REJUV);
+			}
+
+			// Mark the process as having responded and increment sequence number
+			memberMap[addr.getAddress()].pstat = NOT_PINGED;
+			memberMap[addr.getAddress()].pseq++;
+
+			break;
+		}
+		default:
+			cout << memberNode->addr.getAddress() << ": INVALID MESSAGE" << endl;
+			break;
+	}
+	//Free the message
+	free(data);
+	
+	return true;	
 }
 
 /**
@@ -229,10 +495,81 @@ bool MP1Node::recvCallBack(void *env, char *data, int size ) {
  */
 void MP1Node::nodeLoopOps() {
 
-	/*
-	 * Your code goes here
-	 */
+	Address addr;
+	int currTime = par->getcurrtime();
 
+	// Pop stale elements off the delta buffer
+	dbTimer++;
+	if(dbTimer >= DB_TIMEOUT){
+		dbTimer = 0;
+		if(!deltaBuff.empty()){
+			deltaBuff.pop_back();	
+			dbit = deltaBuff.begin();
+		}
+	} 
+	// Check if there are any processes that have exceeded the cleanup time
+	if(!suspects.empty() && suspects.front().second <= currTime){
+		addr = Address(suspects.front().first);
+
+		// Remove this proess from the member map and write to grading log
+		memberMap.erase(suspects.front().first);
+		log->logNodeRemove(&memberNode->addr, &addr);
+		// Remove this element from the suspects queue
+		suspects.pop_front();	
+		// For MP2 need to use the memberlist... frustratingly inefficient	
+		removeMember(addr);
+	}
+
+	pingData pdata;
+	while(!pinged.empty() && pinged.front().expTime < currTime ){
+		pdata = pinged.front();
+		pinged.pop();
+		auto mIt = memberMap.find(pdata.addr);
+		/* Check if the sequence number has not been incremented, indicating that no ACK was recieved */
+		if(mIt != memberMap.end() && pdata.pseq == mIt->second.pseq){
+			writeDeltaBuff(pdata.addr, FAILED);
+		}
+	} 			
+
+	// Construct PING message, containing an event from the delta buffer
+	msg* mOut = createMessage(PING);
+	// Chose M random processes to send a PING
+
+	// Select a random element
+	int p = rand() % memberMap.size();
+	auto it = memberMap.begin();
+	std::advance(it, p);
+	unsigned long attempts = 0;
+
+	for(int i = 0; i < M && attempts < memberMap.size(); ){
+		attempts++;
+		addr = it->first;
+		// Dont send PING to yourself
+		if(addr == memberNode->addr){
+			//Don't count this
+			continue;
+		}
+		emulNet->ENsend(&memberNode->addr, &addr, (char*)mOut, PING_MSG_SIZE);
+
+		// Add ping event to the queue if it is not already there
+		if(memberMap[addr.getAddress()].pstat == NOT_PINGED){
+			pdata.expTime  = currTime + TFAIL;
+			pdata.pseq     = it->second.pseq;
+			pdata.addr     = it->first;
+			pinged.push(pdata);
+		}
+		// Add processes to PING map
+		memberMap[addr.getAddress()].pstat = PINGED;
+
+		// Go to next element, wrapping around if needed
+		i++;
+		it++;
+		if(it == memberMap.end()){
+			it = memberMap.begin();
+		}
+	}
+	
+	delete mOut;
     return;
 }
 
@@ -278,4 +615,32 @@ void MP1Node::printAddress(Address *addr)
 {
     printf("%d.%d.%d.%d:%d \n",  addr->addr[0],addr->addr[1],addr->addr[2],
                                                        addr->addr[3], *(short*)&addr->addr[4]) ;    
+}
+
+void MP1Node::decomposeAddr(string addr, long* id, long* port){
+		size_t pos = addr.find(":");
+		*id = (long)stoi(addr.substr(0, pos));
+		*port = (long)stoi(addr.substr(pos + 1, addr.size()-pos-1));
+}
+
+void MP1Node::addMember(Address addr){
+	long id, port;
+	decomposeAddr(addr, &id, &port);	
+	memberNode->memberList.push_back(MemberListEntry((int)id, short(port));	
+}
+
+void MP1Node::removeMember(Address addr){
+	long id, port;
+	decomposeAddr(addr, &id, &port);
+	auto it = memberNode->memberList.begin();	
+	for( ; it != memberNode->memberList.end(); it++){
+		if(it->id == id && it->port == port){
+			// Found the node to delete
+			memberNode->memberList.erase(it);
+			return;
+		}	
+	}
+	cout << "MEMBER NOT FOUND" << endl;
+	throw std::invalid_argument("MEMBER_NOT_FOUND");		
+
 }
