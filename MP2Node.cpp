@@ -254,8 +254,9 @@ void MP2Node::checkMessages() {
 	/*
 	 * Declare your local variables here
 	 */
-	bool status;
-	string val;
+	bool status;	// Transaction success
+	tStat tclose; 	// Whether this reply closed the transaction
+	string val;		// Value returned by read (value::timestamp::replicaType)
 
 	// dequeue all messages and handle them
 	while ( !memberNode->mp2q.empty() ) {
@@ -278,7 +279,7 @@ void MP2Node::checkMessages() {
 				// Reply to message
 				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
 
-				logAction(CREATE, msg.transID, msg.key, msg.value, status);
+				logAction(CREATE, msg.transID, false, msg.key, msg.value, status);
 				break;
 			}
 			case READ:  
@@ -292,7 +293,7 @@ void MP2Node::checkMessages() {
 				// Send READREPLY message to sender of received message
 				sendMessage(&msg.fromAddr, &rred);
 
-				logAction(READ, msg.transID, msg.key, msg.value, status);
+				logAction(READ, msg.transID, false, msg.key, msg.value, status);
 				break;
 			}
 			case UPDATE:
@@ -302,7 +303,7 @@ void MP2Node::checkMessages() {
 				// Reply to message
 				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
 
-				logAction(UPDATE, msg.transID, msg.key, msg.value, status);
+				logAction(UPDATE, msg.transID, false, msg.key, msg.value, status);
 				break;
 			}
 			case DELETE:
@@ -313,7 +314,7 @@ void MP2Node::checkMessages() {
 				// Reply to message
 				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
 
-				logAction(DELETE, msg.transID, msg.key, msg.value, status);
+				logAction(DELETE, msg.transID, false, msg.key, msg.value, status);
 				break;
 			}
 			case REPLY: 
@@ -321,7 +322,15 @@ void MP2Node::checkMessages() {
 				// Record reply in transaction
 				auto it = tmap.find(msg.transID);
 				if(it != tmap.end()){
-					it->second.addReply(msg.success);
+					tclose = it->second.addReply(msg.success);
+					// If the transaction automatically closes, then remove it from the transaction map
+					if(tclose == CLOSE_FAIL || tclose == CLOSE_SUCCESS){
+						tmap.erase(msg.transID);
+						logAction(msg.type, msg.transID, true, 
+						//TODO: need to find a way to log the correct value upon close
+						// make addReply return number of transactions, chek and close if necessary. 
+						// make close transaction return the correct value (string or bool
+					}
 				}
 				else{
 					cout << "TRANSACTION NOT RECOGNIZED" << endl;
@@ -335,7 +344,11 @@ void MP2Node::checkMessages() {
 				// Record reply in transaction
 				auto it = tmap.find(msg.transID);
 				if(it != tmap.end()){
-					it->second.addReply(msg.value);
+					tclose = it->second.addReply(msg.value);
+					// If the transaction automatically closes, then remove it from the transaction map
+					if(tclose){
+						tmap.erase(msg.transID);
+					}
 				}
 				else{
 					cout << "TRANSACTION NOT RECOGNIZED" << endl;
@@ -360,15 +373,15 @@ void MP2Node::sendREPLY(int* transID, Address* sender, MessageType type, bool st
 	sendMessage(sender, &rep);
 }
 
-void MP2Node::logAction(MessageType type, int tid, string key, string value, bool status){
+void MP2Node::logAction(MessageType type, bool isCoord, int tid, string key, string value, bool status){
 	// if READ, then make sure to digest the key into non-delimited fashion		
 	switch(type){
 		case CREATE:
 		{
 			if(status)
-				logCreateSuccess(&memberNode->addr, false, tid, key, value);
+				log->logCreateSuccess(&memberNode->addr, isCoord, tid, key, value);
 			else
-				logCreateFail(	 &memberNode->addr, false, tid, key, value);
+				log->logCreateFail(	 &memberNode->addr, isCoord, tid, key, value);
 			break;
 		}
 
@@ -377,27 +390,27 @@ void MP2Node::logAction(MessageType type, int tid, string key, string value, boo
 			if(status)
 				// Use the Entry string constructor to remove timestamp/type info
 				Entry e(value);
-				logReadSuccess(&memberNode->addr, false, tid, key, e.value);
+				log->logReadSuccess(&memberNode->addr, isCoord, tid, key, e.value);
 			else
-				logReadFail(   &memberNode->addr, false, tid, key);
+				log->logReadFail(   &memberNode->addr, isCoord, tid, key);
 			break;
 		}
 
 		case UPDATE:
 		{
 			if(status)
-				logUpdateSuccess(&memberNode->addr, false, tid, key, value);
+				log->logUpdateSuccess(&memberNode->addr, isCoord, tid, key, value);
 			else
-				logUpdateFail(   &memberNode->addr, false, tid, key, value);
+				log->logUpdateFail(   &memberNode->addr, isCoord, tid, key, value);
 			break;
 		}
 
 		case DELETE:
 		{
 			if(status)	 
-				logDeleteSuccess(&memberNode->addr, false, tid, key);	
+				log->logDeleteSuccess(&memberNode->addr, isCoord, tid, key);	
 			else
-				logDeleteFail(   &memberNode->addr, false, tid, key);
+				log->logDeleteFail(   &memberNode->addr, isCoord, tid, key);
 			break;
 		}
 	}
@@ -471,6 +484,12 @@ void MP2Node::stabilizationProtocol() {
 	/*
 	 * Implement this
 	 */
+	// Need to update hasMyReplicas every time
+	// Need to determine if the most recent change effected one of your replicas (check for hasMyReplicas in membership list (look at position in ring as well as address) 
+	// Send a message to write all of your values (make sure not to copy key type) 
+	// Don't over replicate keys
+	// make one type of node responsible for replicating
+	// primary replicates secondary or tertiary, but secondary replicates primary, tertiary replicates none
 }
 
 void MP2Node::sendMsg(Address *toAddr, Message* msg){
@@ -489,22 +508,47 @@ void sendMsgToReplicas(string* key, Message* msg){
 
 /* START TRANSATION CLASS */
 
-Transaction::Transaction(int i, string k, MessageType ty, int st, Log* l) : id(i), key(k), type(ty), stime(st), log(l){
+Transaction::Transaction(int i, string k, MessageType ty, int st, Log* l) : id(i), key(k), type(ty), stime(st), log(l), numOK(0), numReplys(0){
 		if(ty == READ){
 			replys.reserve(NUM_REPLICAS);
 		}
 }
 	// Returns a boolean if this transaction was closed
-bool Transaction::addReply(string reply){
+int Transaction::addReply(string reply){
+		numReplys++;
 		replys.push_back(reply);	
-		if(replys.size() == NUM_REPLICAS){
-			close();
-		} 
+		return numReplys;
+		
 }
 
-void Transaction::close(void){
-
+int Transaction::addReply(bool transOK){
+		// Record reply
+		numReplys++;
+		if(transOK){
+			numOK++;
+		}
+		return numReplys;
 }
+
+string Transaction::close(bool* st){
+		bool success = false;
+		string rep;
+		if(type != READ){
+			*st = (numOK > (int)(NUM_REPLICAS/2));
+			return ""; 
+		}
+		else{
+			Entry en(replys.back());
+			replys.pop_back();
+			//TODO: Figure out how to check for equivalence with arbitrary numbers of strings	
+			while(!replys.empty()){
+				en.value.compare(
+				rep = replys.
+			}
+		}
+		
+ }
+
 
 int Transaction::getStartTime(){
 		return stime;
