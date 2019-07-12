@@ -1,4 +1,5 @@
 /**********************************
+TODO: Make logaction CONST
  * FILE NAME: MP2Node.cpp
  *
  * DESCRIPTION: MP2Node class definition
@@ -271,7 +272,12 @@ void MP2Node::checkMessages() {
 		switch(msg.type){
 			case CREATE:
 			{
+				// Attempt to create the KV
 				status = createKeyValue(msg.key, msg.value, msg.replica);
+
+				// Reply to message
+				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+
 				logAction(CREATE, msg.transID, msg.key, msg.value, status);
 				break;
 			}
@@ -280,40 +286,65 @@ void MP2Node::checkMessages() {
 				val  = readKey(msg.key);
 				// Check for empty string for success
 				status = !val.empty();
+
+				// Create a READREPLY message
+				Message rred(msg.transID, memberNode->addr, READREPLY, val);
+				// Send READREPLY message to sender of received message
+				sendMessage(&msg.fromAddr, &rred);
+
 				logAction(READ, msg.transID, msg.key, msg.value, status);
 				break;
 			}
 			case UPDATE:
 			{
+				// Make the update
 				status = updateKeyValue(msg.key, msg.value, msg.replica);
+				// Reply to message
+				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+
 				logAction(UPDATE, msg.transID, msg.key, msg.value, status);
 				break;
 			}
 			case DELETE:
 			{
+				// Delete the key
 				status = deleteKey(msg.key);
+
+				// Reply to message
+				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+
 				logAction(DELETE, msg.transID, msg.key, msg.value, status);
-				// make logAction CONST
 				break;
 			}
 			case REPLY: 
 			{
-				// Log in transaction
+				// Record reply in transaction
+				auto it = tmap.find(msg.transID);
+				if(it != tmap.end()){
+					it->second.addReply(msg.success);
+				}
+				else{
+					cout << "TRANSACTION NOT RECOGNIZED" << endl;
+				}
+				// Logging is handled by the transaction class
+				// No reply needed
 				break;
 			}
 			case READREPLY:
 			{
-				// Log in transaction
+				// Record reply in transaction
+				auto it = tmap.find(msg.transID);
+				if(it != tmap.end()){
+					it->second.addReply(msg.value);
+				}
+				else{
+					cout << "TRANSACTION NOT RECOGNIZED" << endl;
+				}
+				// Logging is handled by the transaction class
+				// No reply needed
 				break;
 			}
 		}
-		if(msg.type == CREATE || msg.type == UPDATE || msg.type == DELETE){
-			// Send a REPLY message
-		}
-		else if(msg.type == READ){
-			// Send a READREPLY message
-		}
-		// No need to reply REPLY or READREPLY
 
 	}
 
@@ -324,8 +355,52 @@ void MP2Node::checkMessages() {
 	// TODO: Should you ping if you don't get a response? 
 }
 
+void MP2Node::sendREPLY(int* transID, Address* sender, MessageType type, bool status){
+	Message rep(*transID, memberNode->addr, type, status); 
+	sendMessage(sender, &rep);
+}
+
 void MP2Node::logAction(MessageType type, int tid, string key, string value, bool status){
 	// if READ, then make sure to digest the key into non-delimited fashion		
+	switch(type){
+		case CREATE:
+		{
+			if(status)
+				logCreateSuccess(&memberNode->addr, false, tid, key, value);
+			else
+				logCreateFail(	 &memberNode->addr, false, tid, key, value);
+			break;
+		}
+
+		case READ:  
+		{
+			if(status)
+				// Use the Entry string constructor to remove timestamp/type info
+				Entry e(value);
+				logReadSuccess(&memberNode->addr, false, tid, key, e.value);
+			else
+				logReadFail(   &memberNode->addr, false, tid, key);
+			break;
+		}
+
+		case UPDATE:
+		{
+			if(status)
+				logUpdateSuccess(&memberNode->addr, false, tid, key, value);
+			else
+				logUpdateFail(   &memberNode->addr, false, tid, key, value);
+			break;
+		}
+
+		case DELETE:
+		{
+			if(status)	 
+				logDeleteSuccess(&memberNode->addr, false, tid, key);	
+			else
+				logDeleteFail(   &memberNode->addr, false, tid, key);
+			break;
+		}
+	}
 
 }
 /**

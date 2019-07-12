@@ -35,6 +35,7 @@ public:
 
 	// addReply: Returns a boolean if this transaction was closed
 	bool addReply(string reply);
+	bool addReply(bool status);
 	void close(void);
 	int getStartTime();
 };
@@ -96,6 +97,7 @@ public:
 	void sendMessage(Address *toAddr, Message* msg);
 	void sendMsgToReplicas(string key, Message* msg);
 
+	void sendREPLY(int* transID, Address* sender, MessageType type, bool status);
 	// handle messages from receiving queue
 	void checkMessages();
 
