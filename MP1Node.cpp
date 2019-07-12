@@ -253,7 +253,6 @@ void MP1Node::processJOINREP(char* mIn, int size){
 	short port;
 	Address addr;
 	// Create an empty entry to be added for various messages
-	nodeData newEntry = nodeData(); //Default Constructor: NOT_SUSPECTED, NOT_PINGED, zero sequence numbers;
 	// Create a vector from the message recieved from introducer
 	for(int i = 0; i < numNodes*2; ){
 		id   = (int)data[i++];
@@ -262,8 +261,7 @@ void MP1Node::processJOINREP(char* mIn, int size){
 		// Create an Address so it can be added to the grading log
 		memcpy(&addr.addr[0], &id,   sizeof(int));
 		memcpy(&addr.addr[4], &port, sizeof(short));
-		memberMap[addr.getAddress()] = newEntry;
-		log->logNodeAdd(&memberNode->addr, &addr);
+		writeDeltaBuff(addr, JOINED);
 	}
 	// Mark yourself as in the group
 	memberNode->inGroup = true;
@@ -272,7 +270,7 @@ void MP1Node::processJOINREP(char* mIn, int size){
 	dbTimer = 0;	
 
 	// Tell everyone you've joined!
-	writeDeltaBuff(memberNode->addr.getAddress(), JOINED);	
+	writeDeltaBuff(memberNode->addr, JOINED);	
 	
 }
 
@@ -357,6 +355,8 @@ void MP1Node::writeDeltaBuff(Address addr, dbTypes type){
 			newEvent = true;
 			/* FOR MP2 need to use memberList to get data to MP2Node class... frustratingly inefficient */
 			addMember(addr);	
+			// Use heartbeat as a sequence number for membership
+			memberNode->heartbeat++;
 				
 		}
 	} 
@@ -497,7 +497,6 @@ void MP1Node::nodeLoopOps() {
 
 	Address addr;
 	int currTime = par->getcurrtime();
-
 	// Pop stale elements off the delta buffer
 	dbTimer++;
 	if(dbTimer >= DB_TIMEOUT){
@@ -518,6 +517,8 @@ void MP1Node::nodeLoopOps() {
 		suspects.pop_front();	
 		// For MP2 need to use the memberlist... frustratingly inefficient	
 		removeMember(addr);
+		// Use heartbeat as a sequence number 	o	
+		memberNode->heartbeat++;
 	}
 
 	pingData pdata;
@@ -625,13 +626,13 @@ void MP1Node::decomposeAddr(string addr, long* id, long* port){
 
 void MP1Node::addMember(Address addr){
 	long id, port;
-	decomposeAddr(addr, &id, &port);	
-	memberNode->memberList.push_back(MemberListEntry((int)id, short(port));	
+	decomposeAddr(addr.getAddress(), &id, &port);	
+	memberNode->memberList.push_back(MemberListEntry((int)id, short(port)));	
 }
 
 void MP1Node::removeMember(Address addr){
 	long id, port;
-	decomposeAddr(addr, &id, &port);
+	decomposeAddr(addr.getAddress(), &id, &port);
 	auto it = memberNode->memberList.begin();	
 	for( ; it != memberNode->memberList.end(); it++){
 		if(it->id == id && it->port == port){
@@ -640,7 +641,14 @@ void MP1Node::removeMember(Address addr){
 			return;
 		}	
 	}
-	cout << "MEMBER NOT FOUND" << endl;
 	throw std::invalid_argument("MEMBER_NOT_FOUND");		
 
+}
+void MP1Node::printMemberList(){
+	cout << memberNode->addr.getAddress() << " printing memberlist: " << endl;
+	int i;
+	for(i = 0; i< memberNode->memberList.size(); i++){
+		cout << "id: " << memberNode->memberList[i].id << " port: " << memberNode->memberList[i].port << endl;
+	} 
+	cout << "end memberList " << endl << endl;
 }

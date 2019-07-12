@@ -38,25 +38,25 @@ void MP2Node::updateRing() {
 	/*
 	 * Implement this. Parts of it are already implemented
 	 */
-	vector<Node> curMemList;
 	bool change = false;
+	static long last_seq = -1;
+	// Compare last_seq to heartbeat to determine if there was a change
+	if(last_seq == memberNode->heartbeat){
+		return;
+	}
+	// Store sequence number for next time
+	last_seq = memberNode->heartbeat;
 
-	/*
-	 *  Step 1. Get the current membership list from Membership Protocol / MP1
-	 */
-	curMemList = getMembershipList();
+	// Get the current membership list from Membership Protocol / MP1
+	ring = getMembershipList();
 
-	/*
-	 * Step 2: Construct the ring
-	 */
 	// Sort the list based on the hashCode
-	sort(curMemList.begin(), curMemList.end());
+	sort(ring.begin(), ring.end());
 
-
-	/*
-	 * Step 3: Run the stabilization protocol IF REQUIRED
-	 */
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
+	if(!ht->isempty()){
+		stabilizationProtocol();
+	}
 }
 
 /**
@@ -107,10 +107,19 @@ size_t MP2Node::hashFunction(string key) {
  * 				2) Finds the replicas of this key
  * 				3) Sends a message to the replica
  */
+// Note: This method is poorly named, but this name is required for grading
+// This method is executed by the coordinator node
 void MP2Node::clientCreate(string key, string value) {
-	/*
-	 * Implement this
-	 */
+	int tid = g_transID++;
+	// Generate new transaction ID and a new message for this request
+	Message msg(tid, memberNode->addr, CREATE, key, value); 
+
+	// Send to replicas that have this key
+	sendMsgToReplicas(&key, &msg); 
+
+	// Open a new transaction
+	tmap[tid] = Transaction(tid, key, CREATE, par->getcurrtime(), log); 	
+	
 }
 
 /**
@@ -123,9 +132,15 @@ void MP2Node::clientCreate(string key, string value) {
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientRead(string key){
-	/*
-	 * Implement this
-	 */
+	int tid= g_transID++;
+	// Generate new transaction ID and a new message for this request
+	Message msg(tid, memberNode->addr, READ, key); 
+
+	// Send to replicas that have this key
+	sendMsgToReplicas(&key, &msg); 
+
+	// Open a new transaction
+	tmap[tid] = Transaction(tid, key, READ, par->getcurrtime(), log); 	
 }
 
 /**
@@ -138,9 +153,15 @@ void MP2Node::clientRead(string key){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientUpdate(string key, string value){
-	/*
-	 * Implement this
-	 */
+	int tid = g_transID++;
+	// Generate new transaction ID and a new message for this request
+	Message msg(tid, memberNode->addr, UPDATE, key, value); 
+
+	// Send to replicas that have this key
+	sendMsgToReplicas(&key, &msg); 
+
+	// Open a new transaction
+	tmap[tid] = Transaction(tid, key, UPDATE, par->getcurrtime(), log); 	
 }
 
 /**
@@ -153,9 +174,15 @@ void MP2Node::clientUpdate(string key, string value){
  * 				3) Sends a message to the replica
  */
 void MP2Node::clientDelete(string key){
-	/*
-	 * Implement this
-	 */
+	int tid = g_transID++;
+	// Generate new transaction ID and a new message for this request
+	Message msg(tid, memberNode->addr, DELETE, key); 
+
+	// Send to replicas that have this key
+	sendMsgToReplicas(&key, &msg); 
+
+	// Open a new transaction
+	tmap[tid] = Transaction(tid, key, DELETE, par->getcurrtime(), log); 	
 }
 
 /**
@@ -167,10 +194,8 @@ void MP2Node::clientDelete(string key){
  * 			   	2) Return true or false based on success or failure
  */
 bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
-	// Insert key, value, replicaType into the hash table
+	Entry v(value, par->getcurrtime(), replica)
+	return ht->create(key, v.convertToString()); 
 }
 
 /**
@@ -182,10 +207,7 @@ bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
  * 			    2) Return value
  */
 string MP2Node::readKey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Read key from local hash table and return value
+	return ht->read(key);
 }
 
 /**
@@ -197,10 +219,8 @@ string MP2Node::readKey(string key) {
  * 				2) Return true or false based on success or failure
  */
 bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
-	/*
-	 * Implement this
-	 */
-	// Update key in local hash table and return true or false
+	Entry v(value, par->getcurrtime(), replica);
+	return ht->update(key, v.convertToString()); 
 }
 
 /**
@@ -212,10 +232,7 @@ bool MP2Node::updateKeyValue(string key, string value, ReplicaType replica) {
  * 				2) Return true or false based on success or failure
  */
 bool MP2Node::deletekey(string key) {
-	/*
-	 * Implement this
-	 */
-	// Delete the key from the local hash table
+	return ht->deleteKey(key);
 }
 
 /**
@@ -236,6 +253,8 @@ void MP2Node::checkMessages() {
 	/*
 	 * Declare your local variables here
 	 */
+	bool status;
+	string val;
 
 	// dequeue all messages and handle them
 	while ( !memberNode->mp2q.empty() ) {
@@ -248,9 +267,53 @@ void MP2Node::checkMessages() {
 
 		string message(data, data + size);
 
-		/*
-		 * Handle the message types here
-		 */
+		Message msg(message);
+		switch(msg.type){
+			case CREATE:
+			{
+				status = createKeyValue(msg.key, msg.value, msg.replica);
+				logAction(CREATE, msg.transID, msg.key, msg.value, status);
+				break;
+			}
+			case READ:  
+			{
+				val  = readKey(msg.key);
+				// Check for empty string for success
+				status = !val.empty();
+				logAction(READ, msg.transID, msg.key, msg.value, status);
+				break;
+			}
+			case UPDATE:
+			{
+				status = updateKeyValue(msg.key, msg.value, msg.replica);
+				logAction(UPDATE, msg.transID, msg.key, msg.value, status);
+				break;
+			}
+			case DELETE:
+			{
+				status = deleteKey(msg.key);
+				logAction(DELETE, msg.transID, msg.key, msg.value, status);
+				// make logAction CONST
+				break;
+			}
+			case REPLY: 
+			{
+				// Log in transaction
+				break;
+			}
+			case READREPLY:
+			{
+				// Log in transaction
+				break;
+			}
+		}
+		if(msg.type == CREATE || msg.type == UPDATE || msg.type == DELETE){
+			// Send a REPLY message
+		}
+		else if(msg.type == READ){
+			// Send a READREPLY message
+		}
+		// No need to reply REPLY or READREPLY
 
 	}
 
@@ -258,8 +321,13 @@ void MP2Node::checkMessages() {
 	 * This function should also ensure all READ and UPDATE operation
 	 * get QUORUM replies
 	 */
+	// TODO: Should you ping if you don't get a response? 
 }
 
+void MP2Node::logAction(MessageType type, int tid, string key, string value, bool status){
+	// if READ, then make sure to digest the key into non-delimited fashion		
+
+}
 /**
  * FUNCTION NAME: findNodes
  *
@@ -329,3 +397,40 @@ void MP2Node::stabilizationProtocol() {
 	 * Implement this
 	 */
 }
+
+void MP2Node::sendMsg(Address *toAddr, Message* msg){
+	ENsend(&memberNode->addr, toAddr, msg->toString);
+}
+
+void sendMsgToReplicas(string* key, Message* msg){
+	// Get vector of nodes where this key is stored
+	vector<Node> nodes = findNodes(*key);
+	
+	// Send the message to them
+	for(int i = 0; i < nodes.size(); i++){
+		sendMsg(&nodes[i].nodeAddress, msg);	
+	}
+}
+
+/* START TRANSATION CLASS */
+
+Transaction::Transaction(int i, string k, MessageType ty, int st, Log* l) : id(i), key(k), type(ty), stime(st), log(l){
+		if(ty == READ){
+			replys.reserve(NUM_REPLICAS);
+		}
+}
+	// Returns a boolean if this transaction was closed
+bool Transaction::addReply(string reply){
+		replys.push_back(reply);	
+		if(replys.size() == NUM_REPLICAS){
+			close();
+		} 
+}
+
+void Transaction::close(void){
+
+}
+
+int Transaction::getStartTime(){
+		return stime;
+}	

@@ -175,6 +175,7 @@ public:
 	Address getJoinAddress();
 	void printAddress(Address *addr);
 	void decomposeAddr(string addr, long* id, long* port);
+	void printMemberList();
 	virtual ~MP1Node();
 };
 

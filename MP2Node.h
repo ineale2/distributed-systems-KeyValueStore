@@ -19,6 +19,26 @@
 #include "Message.h"
 #include "Queue.h"
 
+#define NUM_REPLICAS 3
+
+class Transaction{
+private:
+	int				id;     // Transaction ID
+	string 			key;    // Key for this transaction
+	vector<string> 	replys;	// Replys to transaction
+	MessageType 	type;	// Transaction type
+	int 			stime; 	// Start time of transaction
+	Log*			log;
+
+public:
+	Transaction(int i, string k, MessageType ty, int st, Log* l);
+
+	// addReply: Returns a boolean if this transaction was closed
+	bool addReply(string reply);
+	void close(void);
+	int getStartTime();
+};
+
 /**
  * CLASS NAME: MP2Node
  *
@@ -47,6 +67,9 @@ private:
 	EmulNet * emulNet;
 	// Object of Log
 	Log * log;
+	// Transactions that are currently open at this node 
+	// Key: Transaction ID, 
+	unordered_map<int, Transaction> tmap;
 
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
@@ -70,6 +93,9 @@ public:
 	bool recvLoop();
 	static int enqueueWrapper(void *env, char *buff, int size);
 
+	void sendMessage(Address *toAddr, Message* msg);
+	void sendMsgToReplicas(string key, Message* msg);
+
 	// handle messages from receiving queue
 	void checkMessages();
 
@@ -88,6 +114,8 @@ public:
 	// stabilization protocol - handle multiple failures
 	void stabilizationProtocol();
 
+	// logging methods
+	void logAction(MessageType type, int tid, string key, string value, bool status);
 	~MP2Node();
 };
 
