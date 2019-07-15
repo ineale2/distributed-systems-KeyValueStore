@@ -106,7 +106,7 @@ public:
 	void sendMessage(Address *toAddr, Message* msg);
 	void sendMsgToReplicas(string* key, Message* msg);
 
-	void sendREPLY(int* transID, Address* sender, MessageType type, bool status);
+	void sendREPLY(int* transID, Address* toAddr, bool status);
 	// handle messages from receiving queue
 	void checkMessages();
 
@@ -126,6 +126,7 @@ public:
 	void stabilizationProtocol();
 
 	// logging methods
+	string type2string(MessageType type);
 	void logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status);
 	~MP2Node();
 };

@@ -571,6 +571,7 @@ void MP1Node::nodeLoopOps() {
 	}
 	
 	delete mOut;
+	//printMemberList();
     return;
 }
 

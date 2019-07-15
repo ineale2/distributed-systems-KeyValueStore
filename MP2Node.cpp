@@ -24,7 +24,7 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
  */
 MP2Node::~MP2Node() {
 	delete ht;
-	delete memberNode;
+	//delete memberNode;
 }
 
 /**
@@ -42,9 +42,18 @@ void MP2Node::updateRing() {
 	 */
 	static long last_seq = -1;
 	// Compare last_seq to heartbeat to determine if there was a change
+	/*
 	if(last_seq == memberNode->heartbeat){
+		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " no change to membership list " << "HB = " << memberNode->heartbeat << "last_seq = "<< last_seq << endl;
+		for(auto it = ring.begin(); it != ring.end(); it++){
+			cout << it->getAddress()->getAddress() << endl; 
+		}
+		cout << "END MEMBERSHIP LIST " << endl << endl;
 		return;
 	}
+	
+	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " Membership list changed, updating ring" << endl;
+	*/
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
 
@@ -53,7 +62,12 @@ void MP2Node::updateRing() {
 
 	// Sort the list based on the hashCode
 	sort(ring.begin(), ring.end());
-
+	/*
+	for(auto it = ring.begin(); it != ring.end(); it++){
+		cout << it->getAddress()->getAddress() << endl; 
+	}
+	cout << "END MEMBERSHIP LIST " << endl << endl;
+	*/
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 	if(!ht->isEmpty()){
 		stabilizationProtocol();
@@ -120,6 +134,7 @@ void MP2Node::clientCreate(string key, string value) {
 
 	// Open a new transaction
 	tmap[tid] = Transaction(tid, key, value, CREATE, par->getcurrtime(), log); 	
+	cout << "created transaction with ID = " << tid << endl;
 	
 }
 
@@ -270,6 +285,7 @@ void MP2Node::checkMessages() {
 		string message(data, data + size);
 
 		Message msg(message);
+		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got message of type " << type2string(msg.type) << " from " << msg.fromAddr.getAddress() << endl;
 		switch(msg.type){
 			case CREATE:
 			{
@@ -277,7 +293,7 @@ void MP2Node::checkMessages() {
 				status = createKeyValue(msg.key, msg.value, msg.replica);
 
 				// Reply to message
-				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+				sendREPLY(&msg.transID, &msg.fromAddr, status); 
 
 				logAction(CREATE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -289,7 +305,7 @@ void MP2Node::checkMessages() {
 				status = !val.empty();
 
 				// Create a READREPLY message
-				Message rred(msg.transID, memberNode->addr, READREPLY, val);
+				Message rred(msg.transID, memberNode->addr, val);
 				// Send READREPLY message to sender of received message
 				sendMessage(&msg.fromAddr, &rred);
 
@@ -303,7 +319,7 @@ void MP2Node::checkMessages() {
 				// Make the update
 				status = updateKeyValue(msg.key, msg.value, msg.replica);
 				// Reply to message
-				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+				sendREPLY(&msg.transID, &msg.fromAddr, status); 
 
 				logAction(UPDATE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -314,7 +330,7 @@ void MP2Node::checkMessages() {
 				status = deletekey(msg.key);
 
 				// Reply to message
-				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
+				sendREPLY(&msg.transID, &msg.fromAddr, status); 
 
 				logAction(DELETE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -327,12 +343,14 @@ void MP2Node::checkMessages() {
 					numReplys = it->second.addReply(msg.success);
 					// If all replys have been recieved, then close the transaction and then delete it.
 					if(numReplys == NUM_REPLICAS){
+						cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got all replys for transID = " << msg.transID << endl;
 						val = it->second.close(&status);
-						logAction(msg.type, msg.transID, true, it->second.getKey(), it->second.getValue(), status); 
-						tmap.erase(msg.transID);
+						logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), it->second.getValue(), status); 
+						tmap.erase(it);
 					}
 				}
 				else{
+					cout << "transID = " << msg.transID  << endl;
 					cout << "TRANSACTION NOT RECOGNIZED" << endl;
 				}
 				// No reply needed
@@ -341,14 +359,15 @@ void MP2Node::checkMessages() {
 			case READREPLY:
 			{
 				// Record reply in transaction
+				cout << "READREPLY: " << msg.value << endl;
 				auto it = tmap.find(msg.transID);
 				if(it != tmap.end()){
 					numReplys = it->second.addReply(msg.value);
 					// If all replys have been recieved, then close the transaction and then delete it.
 					if(numReplys == NUM_REPLICAS){
 						val = it->second.close(&status);
-						logAction(msg.type, msg.transID, true, it->second.getKey(), val, status); 
-						tmap.erase(msg.transID);
+						logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), val, status); 
+						tmap.erase(it);
 					}
 				}
 				else{
@@ -370,6 +389,7 @@ void MP2Node::checkMessages() {
 	int currtime = par->getcurrtime();
 	for(auto it = tmap.begin(); it != tmap.end(); it++){
 		if(it->second.getStartTime() + T_CLOSE < currtime){
+			cout << "Timeout on transaction  " << it->second.getID() << endl;
 			val = it->second.close(&status);
 			logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), val, status);
 			tmap.erase(it);
@@ -377,9 +397,9 @@ void MP2Node::checkMessages() {
 	}
 }
 
-void MP2Node::sendREPLY(int* transID, Address* sender, MessageType type, bool status){
-	Message rep(*transID, memberNode->addr, type, status); 
-	sendMessage(sender, &rep);
+void MP2Node::sendREPLY(int* transID, Address* toAddr, bool status){
+	Message rep(*transID, memberNode->addr, REPLY, status); 
+	sendMessage(toAddr, &rep);
 }
 
 void MP2Node::logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status){
@@ -531,8 +551,9 @@ Transaction::Transaction(int i, string k, string v, MessageType ty, int st, Log*
 			replys.reserve(NUM_REPLICAS);
 		}
 }
-	// Returns a boolean if this transaction was closed
+
 int Transaction::addReply(string reply){
+		cout << "adding reply " << reply << endl;
 		numReplys++;
 		replys.push_back(reply);	
 		if(!reply.empty()){
@@ -543,6 +564,7 @@ int Transaction::addReply(string reply){
 }
 
 int Transaction::addReply(bool transOK){
+		cout << "adding reply " << transOK << endl;
 		// Record reply
 		numReplys++;
 		if(transOK){
@@ -604,4 +626,23 @@ MessageType Transaction::getType(){
 }
 int Transaction::getID(){
 	return id;
+}
+
+string MP2Node::type2string(MessageType type){
+	switch(type){
+		case CREATE:
+			return "CREATE";
+		case READ:
+			return "READ";
+		case UPDATE:
+			return "UPDATE";
+		case DELETE:
+			return "DELETE";
+		case REPLY:
+			return "REPLY";
+		case READREPLY:
+			return "READREPLY";
+		default:
+			return "BAD TYPE";
+	}
 }
