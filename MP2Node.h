@@ -18,6 +18,7 @@
 #include "Params.h"
 #include "Message.h"
 #include "Queue.h"
+#include <unordered_map>
 
 #define NUM_REPLICAS 3
 #define T_CLOSE 25
@@ -37,12 +38,16 @@ private:
 public:
 	Transaction(int i, string k, MessageType ty, int st, Log* l);
 	Transaction(int i, string k, string v, MessageType ty, int st, Log* l);
+	Transaction();
 
-	// addReply: Returns a boolean if this transaction was closed
-	tStat addReply(string reply);
-	tStat addReply(bool status);
-	void close(void);
-	int getStartTime();
+	int 	 addReply(string reply);
+	int  	addReply(bool status);
+	string 	close(bool*);
+	int		getID();
+	int  	getStartTime();
+	string 	getKey();
+	string 	getValue();
+	MessageType getType();
 };
 
 /**
@@ -74,7 +79,6 @@ private:
 	// Object of Log
 	Log * log;
 	// Transactions that are currently open at this node 
-	// Key: Transaction ID, 
 	unordered_map<int, Transaction> tmap;
 
 public:
@@ -100,7 +104,7 @@ public:
 	static int enqueueWrapper(void *env, char *buff, int size);
 
 	void sendMessage(Address *toAddr, Message* msg);
-	void sendMsgToReplicas(string key, Message* msg);
+	void sendMsgToReplicas(string* key, Message* msg);
 
 	void sendREPLY(int* transID, Address* sender, MessageType type, bool status);
 	// handle messages from receiving queue

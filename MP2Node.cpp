@@ -40,7 +40,6 @@ void MP2Node::updateRing() {
 	/*
 	 * Implement this. Parts of it are already implemented
 	 */
-	bool change = false;
 	static long last_seq = -1;
 	// Compare last_seq to heartbeat to determine if there was a change
 	if(last_seq == memberNode->heartbeat){
@@ -56,7 +55,7 @@ void MP2Node::updateRing() {
 	sort(ring.begin(), ring.end());
 
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
-	if(!ht->isempty()){
+	if(!ht->isEmpty()){
 		stabilizationProtocol();
 	}
 }
@@ -184,7 +183,7 @@ void MP2Node::clientDelete(string key){
 	sendMsgToReplicas(&key, &msg); 
 
 	// Open a new transaction
-	tmap[tid] = Transaction(tid, key, value, DELETE, par->getcurrtime(), log); 	
+	tmap[tid] = Transaction(tid, key, DELETE, par->getcurrtime(), log); 	
 }
 
 /**
@@ -196,7 +195,7 @@ void MP2Node::clientDelete(string key){
  * 			   	2) Return true or false based on success or failure
  */
 bool MP2Node::createKeyValue(string key, string value, ReplicaType replica) {
-	Entry v(value, par->getcurrtime(), replica)
+	Entry v(value, par->getcurrtime(), replica);
 	return ht->create(key, v.convertToString()); 
 }
 
@@ -294,7 +293,9 @@ void MP2Node::checkMessages() {
 				// Send READREPLY message to sender of received message
 				sendMessage(&msg.fromAddr, &rred);
 
-				logAction(READ, msg.transID, false, msg.key, msg.value, status);
+				// Use entry constructor to remove timestamp and type info
+				Entry e(val);
+				logAction(READ, msg.transID, false, msg.key, e.value, status);
 				break;
 			}
 			case UPDATE:
@@ -310,7 +311,7 @@ void MP2Node::checkMessages() {
 			case DELETE:
 			{
 				// Delete the key
-				status = deleteKey(msg.key);
+				status = deletekey(msg.key);
 
 				// Reply to message
 				sendREPLY(&msg.transID, &memberNode->addr, msg.type, status); 
@@ -327,7 +328,7 @@ void MP2Node::checkMessages() {
 					// If all replys have been recieved, then close the transaction and then delete it.
 					if(numReplys == NUM_REPLICAS){
 						val = it->second.close(&status);
-						logAction(msg.type, msg.transID, true, it->second.key, it->second.value, status); 
+						logAction(msg.type, msg.transID, true, it->second.getKey(), it->second.getValue(), status); 
 						tmap.erase(msg.transID);
 					}
 				}
@@ -346,7 +347,7 @@ void MP2Node::checkMessages() {
 					// If all replys have been recieved, then close the transaction and then delete it.
 					if(numReplys == NUM_REPLICAS){
 						val = it->second.close(&status);
-						logAction(msg.type, msg.transID, true, it->second.key, val, status); 
+						logAction(msg.type, msg.transID, true, it->second.getKey(), val, status); 
 						tmap.erase(msg.transID);
 					}
 				}
@@ -367,9 +368,11 @@ void MP2Node::checkMessages() {
 	 */
 	// TODO: Should you ping if you don't get a response? 
 	int currtime = par->getcurrtime();
-	for(auto it = tmap.begin(); it! = tmap.end(); it++){
+	for(auto it = tmap.begin(); it != tmap.end(); it++){
 		if(it->second.getStartTime() + T_CLOSE < currtime){
-			it->second.close();
+			val = it->second.close(&status);
+			logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), val, status);
+			tmap.erase(it);
 		}
 	}
 }
@@ -394,9 +397,7 @@ void MP2Node::logAction(MessageType type, int tid, bool isCoord, string key, str
 		case READ:  
 		{
 			if(status)
-				// Use the Entry string constructor to remove timestamp/type info
-				Entry e(value);
-				log->logReadSuccess(&memberNode->addr, isCoord, tid, key, e.value);
+				log->logReadSuccess(&memberNode->addr, isCoord, tid, key, value);
 			else
 				log->logReadFail(   &memberNode->addr, isCoord, tid, key);
 			break;
@@ -418,6 +419,9 @@ void MP2Node::logAction(MessageType type, int tid, bool isCoord, string key, str
 			else
 				log->logDeleteFail(   &memberNode->addr, isCoord, tid, key);
 			break;
+		}
+		default:{
+			cout << "ERROR IN LOGACTION" << endl;
 		}
 	}
 
@@ -498,21 +502,23 @@ void MP2Node::stabilizationProtocol() {
 	// primary replicates secondary or tertiary, but secondary replicates primary, tertiary replicates none
 }
 
-void MP2Node::sendMsg(Address *toAddr, Message* msg){
-	ENsend(&memberNode->addr, toAddr, msg->toString);
+void MP2Node::sendMessage(Address *toAddr, Message* msg){
+	emulNet->ENsend(&memberNode->addr, toAddr, msg->toString());
 }
 
-void sendMsgToReplicas(string* key, Message* msg){
+void MP2Node::sendMsgToReplicas(string* key, Message* msg){
 	// Get vector of nodes where this key is stored
 	vector<Node> nodes = findNodes(*key);
 	
 	// Send the message to them
 	for(int i = 0; i < nodes.size(); i++){
-		sendMsg(&nodes[i].nodeAddress, msg);	
+		sendMessage(&nodes[i].nodeAddress, msg);	
 	}
 }
 
 /* START TRANSATION CLASS */
+Transaction::Transaction() : id(0), key(""), type(READ), stime(0), log(NULL), numOK(0), numReplys(0){
+}
 
 Transaction::Transaction(int i, string k, MessageType ty, int st, Log* l) : id(i), key(k), type(ty), stime(st), log(l), numOK(0), numReplys(0){
 		if(ty == READ){
@@ -546,7 +552,6 @@ int Transaction::addReply(bool transOK){
 }
 
 string Transaction::close(bool* st){
-		bool success = false;
 		string rep;
 		if(type != READ){
 			*st = (numOK > (int)(NUM_REPLICAS/2));
@@ -571,19 +576,32 @@ string Transaction::close(bool* st){
 			}
 			
 			// Iterate over unordered map to check for quorum
-			for(it = qmap.begin(); it!=qmap.end(); it++){
-				if(it.second > (int)(NUM_REPLICAS/2)){
+			for(it = qmap.begin(); it !=qmap.end(); it++){
+				if(it->second > (int)(NUM_REPLICAS/2)){
 					*st = true;
-					return it.first;
+					return it->first;
 				}	
-			{
+			}
 			*st = false;
 			return "";
 		}
 		
- }
+}
 
 
 int Transaction::getStartTime(){
 		return stime;
 }	
+
+string Transaction::getKey(){
+	return key;
+}
+string Transaction::getValue(){
+	return value;
+}
+MessageType Transaction::getType(){
+	return type;
+}
+int Transaction::getID(){
+	return id;
+}
