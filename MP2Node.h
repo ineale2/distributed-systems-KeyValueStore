@@ -20,16 +20,13 @@
 #include "Queue.h"
 
 #define NUM_REPLICAS 3
-enum tStat{
-	OK,
-	CLOSE_FAIL,
-	CLOSE_SUCCESS	
-};
+#define T_CLOSE 25
 
 class Transaction{
 private:
 	int				id;    		// Transaction ID
 	string 			key;   		// Key for this transaction
+	string 			value;		// Value for this transaction
 	vector<string> 	replys;		// Replys to transaction
 	MessageType 	type;		// Transaction type
 	int 			stime; 		// Start time of transaction
@@ -39,6 +36,7 @@ private:
 
 public:
 	Transaction(int i, string k, MessageType ty, int st, Log* l);
+	Transaction(int i, string k, string v, MessageType ty, int st, Log* l);
 
 	// addReply: Returns a boolean if this transaction was closed
 	tStat addReply(string reply);
@@ -124,7 +122,7 @@ public:
 	void stabilizationProtocol();
 
 	// logging methods
-	void logAction(MessageType type, bool isCoord, int tid, string key, string value, bool status);
+	void logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status);
 	~MP2Node();
 };
 

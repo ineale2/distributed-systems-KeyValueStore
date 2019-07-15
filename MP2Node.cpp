@@ -1,4 +1,5 @@
 /**********************************
+TODO: Consider rewriting to make strings dynamic and prevent string copying
 TODO: Make logaction CONST
  * FILE NAME: MP2Node.cpp
  *
@@ -119,7 +120,7 @@ void MP2Node::clientCreate(string key, string value) {
 	sendMsgToReplicas(&key, &msg); 
 
 	// Open a new transaction
-	tmap[tid] = Transaction(tid, key, CREATE, par->getcurrtime(), log); 	
+	tmap[tid] = Transaction(tid, key, value, CREATE, par->getcurrtime(), log); 	
 	
 }
 
@@ -162,7 +163,7 @@ void MP2Node::clientUpdate(string key, string value){
 	sendMsgToReplicas(&key, &msg); 
 
 	// Open a new transaction
-	tmap[tid] = Transaction(tid, key, UPDATE, par->getcurrtime(), log); 	
+	tmap[tid] = Transaction(tid, key, value, UPDATE, par->getcurrtime(), log); 	
 }
 
 /**
@@ -183,7 +184,7 @@ void MP2Node::clientDelete(string key){
 	sendMsgToReplicas(&key, &msg); 
 
 	// Open a new transaction
-	tmap[tid] = Transaction(tid, key, DELETE, par->getcurrtime(), log); 	
+	tmap[tid] = Transaction(tid, key, value, DELETE, par->getcurrtime(), log); 	
 }
 
 /**
@@ -255,7 +256,7 @@ void MP2Node::checkMessages() {
 	 * Declare your local variables here
 	 */
 	bool status;	// Transaction success
-	tStat tclose; 	// Whether this reply closed the transaction
+	int numReplys; 	// Number of replys so far                         
 	string val;		// Value returned by read (value::timestamp::replicaType)
 
 	// dequeue all messages and handle them
@@ -322,20 +323,17 @@ void MP2Node::checkMessages() {
 				// Record reply in transaction
 				auto it = tmap.find(msg.transID);
 				if(it != tmap.end()){
-					tclose = it->second.addReply(msg.success);
-					// If the transaction automatically closes, then remove it from the transaction map
-					if(tclose == CLOSE_FAIL || tclose == CLOSE_SUCCESS){
+					numReplys = it->second.addReply(msg.success);
+					// If all replys have been recieved, then close the transaction and then delete it.
+					if(numReplys == NUM_REPLICAS){
+						val = it->second.close(&status);
+						logAction(msg.type, msg.transID, true, it->second.key, it->second.value, status); 
 						tmap.erase(msg.transID);
-						logAction(msg.type, msg.transID, true, 
-						//TODO: need to find a way to log the correct value upon close
-						// make addReply return number of transactions, chek and close if necessary. 
-						// make close transaction return the correct value (string or bool
 					}
 				}
 				else{
 					cout << "TRANSACTION NOT RECOGNIZED" << endl;
 				}
-				// Logging is handled by the transaction class
 				// No reply needed
 				break;
 			}
@@ -344,9 +342,11 @@ void MP2Node::checkMessages() {
 				// Record reply in transaction
 				auto it = tmap.find(msg.transID);
 				if(it != tmap.end()){
-					tclose = it->second.addReply(msg.value);
-					// If the transaction automatically closes, then remove it from the transaction map
-					if(tclose){
+					numReplys = it->second.addReply(msg.value);
+					// If all replys have been recieved, then close the transaction and then delete it.
+					if(numReplys == NUM_REPLICAS){
+						val = it->second.close(&status);
+						logAction(msg.type, msg.transID, true, it->second.key, val, status); 
 						tmap.erase(msg.transID);
 					}
 				}
@@ -366,6 +366,12 @@ void MP2Node::checkMessages() {
 	 * get QUORUM replies
 	 */
 	// TODO: Should you ping if you don't get a response? 
+	int currtime = par->getcurrtime();
+	for(auto it = tmap.begin(); it! = tmap.end(); it++){
+		if(it->second.getStartTime() + T_CLOSE < currtime){
+			it->second.close();
+		}
+	}
 }
 
 void MP2Node::sendREPLY(int* transID, Address* sender, MessageType type, bool status){
@@ -373,7 +379,7 @@ void MP2Node::sendREPLY(int* transID, Address* sender, MessageType type, bool st
 	sendMessage(sender, &rep);
 }
 
-void MP2Node::logAction(MessageType type, bool isCoord, int tid, string key, string value, bool status){
+void MP2Node::logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status){
 	// if READ, then make sure to digest the key into non-delimited fashion		
 	switch(type){
 		case CREATE:
@@ -513,10 +519,19 @@ Transaction::Transaction(int i, string k, MessageType ty, int st, Log* l) : id(i
 			replys.reserve(NUM_REPLICAS);
 		}
 }
+
+Transaction::Transaction(int i, string k, string v, MessageType ty, int st, Log* l) : id(i), key(k), value(v), type(ty), stime(st), log(l), numOK(0), numReplys(0){
+		if(ty == READ){
+			replys.reserve(NUM_REPLICAS);
+		}
+}
 	// Returns a boolean if this transaction was closed
 int Transaction::addReply(string reply){
 		numReplys++;
 		replys.push_back(reply);	
+		if(!reply.empty()){
+			numOK++;
+		}
 		return numReplys;
 		
 }
@@ -538,13 +553,32 @@ string Transaction::close(bool* st){
 			return ""; 
 		}
 		else{
-			Entry en(replys.back());
-			replys.pop_back();
-			//TODO: Figure out how to check for equivalence with arbitrary numbers of strings	
+			// Need to check for quorum 
+			// qmap is a map to check quorum, will map each value to number of times it has been seen in replys
+			unordered_map<string, int> :: iterator it;
+			unordered_map<string, int> qmap; 
 			while(!replys.empty()){
-				en.value.compare(
-				rep = replys.
+				Entry en(replys.back());
+				replys.pop_back();
+				it = qmap.find(en.value);
+				// Insert into map
+				if(it == qmap.end()){
+					qmap[en.value] = 1;	
+				}
+				else{
+					qmap[en.value]++;
+				}
 			}
+			
+			// Iterate over unordered map to check for quorum
+			for(it = qmap.begin(); it!=qmap.end(); it++){
+				if(it.second > (int)(NUM_REPLICAS/2)){
+					*st = true;
+					return it.first;
+				}	
+			{
+			*st = false;
+			return "";
 		}
 		
  }
