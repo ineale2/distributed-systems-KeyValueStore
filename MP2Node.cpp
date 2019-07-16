@@ -129,6 +129,7 @@ void MP2Node::clientCreate(string key, string value) {
 	// Generate new transaction ID and a new message for this request
 	Message msg(tid, memberNode->addr, CREATE, key, value); 
 
+	//TODO: Assign replicas
 	// Send to replicas that have this key
 	sendMsgToReplicas(&key, &msg); 
 
@@ -304,14 +305,18 @@ void MP2Node::checkMessages() {
 				// Check for empty string for success
 				status = !val.empty();
 
-				// Create a READREPLY message
-				Message rred(msg.transID, memberNode->addr, val);
-				// Send READREPLY message to sender of received message
-				sendMessage(&msg.fromAddr, &rred);
-
-				// Use entry constructor to remove timestamp and type info
-				Entry e(val);
-				logAction(READ, msg.transID, false, msg.key, e.value, status);
+				// Only reply if read was succesful
+				if(status){
+					// Create a READREPLY message
+					Message rred(msg.transID, memberNode->addr, val);
+					// Send READREPLY message to sender of received message
+					sendMessage(&msg.fromAddr, &rred);
+					// Use entry constructor to remove timestamp and type info
+					cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " readKey("<<msg.key<<") = " << val << endl;
+					Entry e(val);
+					val = e.value;
+				}
+				logAction(READ, msg.transID, false, msg.key, val, status);
 				break;
 			}
 			case UPDATE:
@@ -387,12 +392,17 @@ void MP2Node::checkMessages() {
 	 */
 	// TODO: Should you ping if you don't get a response? 
 	int currtime = par->getcurrtime();
-	for(auto it = tmap.begin(); it != tmap.end(); it++){
+	for(auto it = tmap.begin(); it != tmap.end(); ){
+		// Close the transaction, delete the entry in the map
 		if(it->second.getStartTime() + T_CLOSE < currtime){
 			cout << "Timeout on transaction  " << it->second.getID() << endl;
 			val = it->second.close(&status);
 			logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), val, status);
-			tmap.erase(it);
+			// Iterator invalidated, get new iterator
+			it = tmap.erase(it);
+		}
+		else{
+			it++;
 		}
 	}
 }

@@ -62,8 +62,8 @@ CREATE_TEST_SCORE=0
 
 if [ "${verbose}" -eq 0 ]
 then
-    make clean > /dev/null 2>&1
-    make > /dev/null 2>&1
+#    make clean > /dev/null 2>&1
+#    make > /dev/null 2>&1
     if [ $? -ne "${SUCCESS}" ]
     then
     	echo "COMPILATION ERROR !!!"
@@ -71,8 +71,8 @@ then
     fi
     ./Application ./testcases/create.conf > /dev/null 2>&1
 else
-	make clean
-	make
+#	make clean
+#	make
 	if [ $? -ne "${SUCCESS}" ]
 	then
     	echo "COMPILATION ERROR !!!"
@@ -132,8 +132,8 @@ DELETE_TEST2_SCORE=0
 
 if [ "${verbose}" -eq 0 ]
 then
-    make clean > /dev/null 2>&1
-    make > /dev/null 2>&1
+#    make clean > /dev/null 2>&1
+#    make > /dev/null 2>&1
     if [ $? -ne "${SUCCESS}" ]
     then
     	echo "COMPILATION ERROR !!!"
@@ -141,8 +141,8 @@ then
     fi
     ./Application ./testcases/delete.conf > /dev/null 2>&1
 else
-	make clean
-	make
+#	make clean
+#	make
 	if [ $? -ne "${SUCCESS}" ]
 	then
     	echo "COMPILATION ERROR !!!"
@@ -230,8 +230,8 @@ READ_TEST5_SCORE=0
 
 if [ "${verbose}" -eq 0 ]
 then
-    make clean > /dev/null 2>&1
-    make > /dev/null 2>&1
+ #   make clean > /dev/null 2>&1
+ #   make > /dev/null 2>&1
     if [ $? -ne "${SUCCESS}" ]
     then
     	echo "COMPILATION ERROR !!!"
@@ -239,8 +239,8 @@ then
     fi
     ./Application ./testcases/read.conf > /dev/null 2>&1
 else
-	make clean
-	make
+#	make clean
+#	make
 	if [ $? -ne "${SUCCESS}" ]
 	then
     	echo "COMPILATION ERROR !!!"
@@ -438,8 +438,8 @@ UPDATE_TEST5_SCORE=0
 
 if [ "${verbose}" -eq 0 ]
 then
-    make clean > /dev/null 2>&1
-    make > /dev/null 2>&1
+#    make clean > /dev/null 2>&1
+#    make > /dev/null 2>&1
     if [ $? -ne "${SUCCESS}" ]
     then
     	echo "COMPILATION ERROR !!!"
@@ -447,8 +447,8 @@ then
     fi
     ./Application ./testcases/update.conf > /dev/null 2>&1
 else
-	make clean
-	make
+#	make clean
+#	make
 	if [ $? -ne "${SUCCESS}" ]
 	then
     	echo "COMPILATION ERROR !!!"
