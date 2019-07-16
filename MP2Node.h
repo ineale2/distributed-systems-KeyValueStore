@@ -22,6 +22,7 @@
 
 #define NUM_REPLICAS 3
 #define T_CLOSE 25
+#define INIT_SEQ -1
 
 class Transaction{
 private:
@@ -81,6 +82,8 @@ private:
 	// Transactions that are currently open at this node 
 	unordered_map<int, Transaction> tmap;
 
+	// Last sequence number from membership protocol, used to check if there has been a change
+	int last_seq;
 public:
 	MP2Node(Member *memberNode, Params *par, EmulNet *emulNet, Log *log, Address *addressOfMember);
 	Member * getMemberNode() {
@@ -105,6 +108,7 @@ public:
 
 	void sendMessage(Address *toAddr, Message* msg);
 	void sendMsgToReplicas(string* key, Message* msg);
+	void sendCreateToReplicas(string* key, Message* msg);
 
 	void sendREPLY(int* transID, Address* toAddr, bool status);
 	// handle messages from receiving queue

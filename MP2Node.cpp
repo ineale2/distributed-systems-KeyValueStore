@@ -17,6 +17,7 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
 	this->log = log;
 	ht = new HashTable();
 	this->memberNode->addr = *address;
+	this->last_seq = INIT_SEQ;
 }
 
 /**
@@ -40,20 +41,12 @@ void MP2Node::updateRing() {
 	/*
 	 * Implement this. Parts of it are already implemented
 	 */
-	static long last_seq = -1;
 	// Compare last_seq to heartbeat to determine if there was a change
-	/*
 	if(last_seq == memberNode->heartbeat){
-		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " no change to membership list " << "HB = " << memberNode->heartbeat << "last_seq = "<< last_seq << endl;
-		for(auto it = ring.begin(); it != ring.end(); it++){
-			cout << it->getAddress()->getAddress() << endl; 
-		}
-		cout << "END MEMBERSHIP LIST " << endl << endl;
 		return;
 	}
 	
 	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " Membership list changed, updating ring" << endl;
-	*/
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
 
@@ -62,12 +55,10 @@ void MP2Node::updateRing() {
 
 	// Sort the list based on the hashCode
 	sort(ring.begin(), ring.end());
-	/*
 	for(auto it = ring.begin(); it != ring.end(); it++){
 		cout << it->getAddress()->getAddress() << endl; 
 	}
 	cout << "END MEMBERSHIP LIST " << endl << endl;
-	*/
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 	if(!ht->isEmpty()){
 		stabilizationProtocol();
@@ -129,14 +120,27 @@ void MP2Node::clientCreate(string key, string value) {
 	// Generate new transaction ID and a new message for this request
 	Message msg(tid, memberNode->addr, CREATE, key, value); 
 
-	//TODO: Assign replicas
 	// Send to replicas that have this key
-	sendMsgToReplicas(&key, &msg); 
+	sendCreateToReplicas(&key, &msg); 
 
 	// Open a new transaction
 	tmap[tid] = Transaction(tid, key, value, CREATE, par->getcurrtime(), log); 	
-	cout << "created transaction with ID = " << tid << endl;
 	
+}
+
+void MP2Node::sendCreateToReplicas(string* key, Message* msg){
+	// In order to generalize for NUM_REPLICAS != 3, need to iterate over enum
+	// Need to define ++ operator for ReplicaType, but this code cannot be changed per the grader instructions
+	// Also note, findNodes, which was provided, does not generalize with NUM_REPLIAS !=3
+	vector<Node> nodes = findNodes(*key);
+	msg->replica = PRIMARY;
+	sendMessage(&nodes[0].nodeAddress, msg);
+
+	msg->replica = SECONDARY;
+	sendMessage(&nodes[1].nodeAddress, msg);
+
+	msg->replica = TERTIARY;
+	sendMessage(&nodes[2].nodeAddress, msg);
 }
 
 /**
