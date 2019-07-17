@@ -1,4 +1,5 @@
 /**********************************
+TODO: make findNodes return a set
 TODO: Consider rewriting to make strings dynamic and prevent string copying
 TODO: Make logaction CONST
  * FILE NAME: MP2Node.cpp
@@ -18,6 +19,7 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
 	ht = new HashTable();
 	this->memberNode->addr = *address;
 	this->last_seq = INIT_SEQ;
+	this->hasMyReplicas = findNodes(address->getAddress());
 }
 
 /**
@@ -46,7 +48,6 @@ void MP2Node::updateRing() {
 		return;
 	}
 	
-	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " Membership list changed, updating ring" << endl;
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
 
@@ -55,10 +56,15 @@ void MP2Node::updateRing() {
 
 	// Sort the list based on the hashCode
 	sort(ring.begin(), ring.end());
+
+	// Print membership list
+	/*
+	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " Membership list changed, updating ring" << endl;
 	for(auto it = ring.begin(); it != ring.end(); it++){
 		cout << it->getAddress()->getAddress() << endl; 
 	}
 	cout << "END MEMBERSHIP LIST " << endl << endl;
+	*/
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 	if(!ht->isEmpty()){
 		stabilizationProtocol();
@@ -290,7 +296,7 @@ void MP2Node::checkMessages() {
 		string message(data, data + size);
 
 		Message msg(message);
-		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got message of type " << type2string(msg.type) << " from " << msg.fromAddr.getAddress() << endl;
+		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got message with TID = " << msg.transID << " of type " << type2string(msg.type) << " from " << msg.fromAddr.getAddress() << endl;
 		switch(msg.type){
 			case CREATE:
 			{
@@ -298,7 +304,7 @@ void MP2Node::checkMessages() {
 				status = createKeyValue(msg.key, msg.value, msg.replica);
 
 				// Reply to message
-				sendREPLY(&msg.transID, &msg.fromAddr, status); 
+				sendREPLY(msg.transID, &msg.fromAddr, status); 
 
 				logAction(CREATE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -328,7 +334,7 @@ void MP2Node::checkMessages() {
 				// Make the update
 				status = updateKeyValue(msg.key, msg.value, msg.replica);
 				// Reply to message
-				sendREPLY(&msg.transID, &msg.fromAddr, status); 
+				sendREPLY(msg.transID, &msg.fromAddr, status); 
 
 				logAction(UPDATE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -339,7 +345,7 @@ void MP2Node::checkMessages() {
 				status = deletekey(msg.key);
 
 				// Reply to message
-				sendREPLY(&msg.transID, &msg.fromAddr, status); 
+				sendREPLY(msg.transID, &msg.fromAddr, status); 
 
 				logAction(DELETE, msg.transID, false, msg.key, msg.value, status);
 				break;
@@ -411,13 +417,18 @@ void MP2Node::checkMessages() {
 	}
 }
 
-void MP2Node::sendREPLY(int* transID, Address* toAddr, bool status){
-	Message rep(*transID, memberNode->addr, REPLY, status); 
+void MP2Node::sendREPLY(int transID, Address* toAddr, bool status){
+	if(transID == STABILIZATION_TID){
+		return;
+	}
+	Message rep(transID, memberNode->addr, REPLY, status); 
 	sendMessage(toAddr, &rep);
 }
 
 void MP2Node::logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status){
-	// if READ, then make sure to digest the key into non-delimited fashion		
+	if(tid == STABILIZATION_TID){
+		return;
+	}
 	switch(type){
 		case CREATE:
 		{
@@ -528,14 +539,53 @@ void MP2Node::stabilizationProtocol() {
 	/*
 	 * Implement this
 	 */
-	// Need to update hasMyReplicas every time
-	// Need to determine if the most recent change effected one of your replicas (check for hasMyReplicas in membership list (look at position in ring as well as address) 
-	// Send a message to write all of your values (make sure not to copy key type) 
-	// Don't over replicate keys
-	// make one type of node responsible for replicating
-	// primary replicates secondary or tertiary, but secondary replicates primary, tertiary replicates none
+	// Determine if the change effects your keys
+	vector<Node> newReplicaList = findNodes(memberNode->addr.getAddress());
+
+	// Vectors of nodes to send creates to
+	vector<Address>*cvec = findNewNeighbors(&hasMyReplicas, &newReplicaList);
+
+	map<string, string>::iterator hIt;
+	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by instructors... 
+	// Only iterate over the hash table if there are nodes to send messages to
+	if(!cvec->empty()){	
+		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); hIt++){
+			// Update the messages key and values
+			msg.key = hIt->first;
+			msg.value = hIt->second;
+			// Send the message to everyone who should have the key
+			for(int i = 0; i < cvec->size(); i++){
+				sendMessage( &((*cvec)[i] ), &msg);	
+			}
+		}
+	}
+	// Clean up memory
+
+	hasMyReplicas = newReplicaList;
+	delete cvec;
 }
 
+// Returns a vector of addresses of nodes in newList but not in oldList
+vector<Address>* MP2Node::findNewNeighbors(vector<Node>* oldList, vector<Node>* newList){
+	vector<Address>* cvec = new vector<Address>;
+	// Would like to use an unordered_set or unordred_map, but need to define operator() for Node class to return hash, and also operator ==, but cannot change Node.h for grading...
+	// Using an unordered_set will make this O(n), but unfortunatley this must be O(n^2)
+
+	bool found;
+	for(int i =	 0; i < newList->size(); i++){
+		found = false;
+		for(int j = 0; j <oldList->size(); j++){
+			if((*newList)[i].nodeAddress == (*oldList)[j].nodeAddress){
+				found = true;
+				break;
+			}
+		}
+		if(!found){
+			cvec->push_back((*newList)[i].nodeAddress);
+		}
+	}
+	return cvec;
+}
 void MP2Node::sendMessage(Address *toAddr, Message* msg){
 	emulNet->ENsend(&memberNode->addr, toAddr, msg->toString());
 }

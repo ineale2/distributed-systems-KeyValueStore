@@ -19,7 +19,9 @@
 #include "Message.h"
 #include "Queue.h"
 #include <unordered_map>
+#include <unordered_set>
 
+#define STABILIZATION_TID -1
 #define NUM_REPLICAS 3
 #define T_CLOSE 25
 #define INIT_SEQ -1
@@ -94,7 +96,7 @@ public:
 	void updateRing();
 	vector<Node> getMembershipList();
 	size_t hashFunction(string key);
-	void findNeighbors();
+	vector<Address>* findNewNeighbors(vector<Node>*, vector<Node>*);
 
 	// client side CRUD APIs
 	void clientCreate(string key, string value);
@@ -110,7 +112,7 @@ public:
 	void sendMsgToReplicas(string* key, Message* msg);
 	void sendCreateToReplicas(string* key, Message* msg);
 
-	void sendREPLY(int* transID, Address* toAddr, bool status);
+	void sendREPLY(int transID, Address* toAddr, bool status);
 	// handle messages from receiving queue
 	void checkMessages();
 
