@@ -1,7 +1,10 @@
 /**********************************
+TODO: memory check in valgrind
 TODO: make findNodes return a set
 TODO: Consider rewriting to make strings dynamic and prevent string copying
 TODO: Make logaction CONST
+TODO: Figure out how to prevent over replication
+TODO: figure out why reads return such long values
  * FILE NAME: MP2Node.cpp
  *
  * DESCRIPTION: MP2Node class definition
@@ -39,6 +42,15 @@ MP2Node::~MP2Node() {
  * 				2) Constructs the ring based on the membership list
  * 				3) Calls the Stabilization Protocol
  */
+
+void MP2Node::printRing(){
+	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " RING" << endl;
+	for(auto it = ring.begin(); it != ring.end(); it++){
+		cout << it->getAddress()->getAddress() << " "; 
+	}
+	cout << endl;
+
+}
 void MP2Node::updateRing() {
 	/*
 	 * Implement this. Parts of it are already implemented
@@ -50,21 +62,19 @@ void MP2Node::updateRing() {
 	
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
-
-	// Get the current membership list from Membership Protocol / MP1
+	
+	cout << "OLD RING" << endl;
+	printRing();
+	
 	ring = getMembershipList();
 
 	// Sort the list based on the hashCode
 	sort(ring.begin(), ring.end());
 
 	// Print membership list
-	/*
-	cout << par->getcurrtime() << " " << memberNode->addr.getAddress() <<  " Membership list changed, updating ring" << endl;
-	for(auto it = ring.begin(); it != ring.end(); it++){
-		cout << it->getAddress()->getAddress() << endl; 
-	}
-	cout << "END MEMBERSHIP LIST " << endl << endl;
-	*/
+	
+	cout << "NEW RING" << endl;
+	printRing();
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 	if(!ht->isEmpty()){
 		stabilizationProtocol();
@@ -296,7 +306,9 @@ void MP2Node::checkMessages() {
 		string message(data, data + size);
 
 		Message msg(message);
-		cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got message with TID = " << msg.transID << " of type " << type2string(msg.type) << " from " << msg.fromAddr.getAddress() << endl;
+		if(msg.transID == STABILIZATION_TID){
+			cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got STAB CREATE for key " << msg.key << " from " << msg.fromAddr.getAddress() << endl;
+		}
 		switch(msg.type){
 			case CREATE:
 			{
@@ -400,7 +412,6 @@ void MP2Node::checkMessages() {
 	 * This function should also ensure all READ and UPDATE operation
 	 * get QUORUM replies
 	 */
-	// TODO: Should you ping if you don't get a response? 
 	int currtime = par->getcurrtime();
 	for(auto it = tmap.begin(); it != tmap.end(); ){
 		// Close the transaction, delete the entry in the map
@@ -415,6 +426,20 @@ void MP2Node::checkMessages() {
 			it++;
 		}
 	}
+	if(currtime == 600){
+		printHashTable();
+	}
+}
+
+void MP2Node::printHashTable(){
+			
+	cout << "PRINT HASH TABLE: " << memberNode->addr.getAddress() << endl;
+	for(auto it = ht->hashTable.begin(); it != ht->hashTable.end(); it++){
+		cout << "Key: " << it->first << " Value: " << it->second << endl;
+	
+	}
+	cout << endl;
+	
 }
 
 void MP2Node::sendREPLY(int transID, Address* toAddr, bool status){
@@ -536,33 +561,113 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  *				Note:- "CORRECT" replicas implies that every key is replicated in its two neighboring nodes in the ring
  */
 void MP2Node::stabilizationProtocol() {
-	/*
-	 * Implement this
-	 */
-	// Determine if the change effects your keys
-	vector<Node> newReplicaList = findNodes(memberNode->addr.getAddress());
+	//TODO: Create more efficient implentation that, in the case of one failure, only sends messages from one remaining replica
+	//To do that, need a get distance in ring function. Only send create message to closest node if both are new, for example
+	// Get the new hasMyReplicas array
+	cout << endl << "Stabilization Protocol: " << memberNode->addr.getAddress() << endl;
+	vector<Node> newHMR = findNodes(memberNode->addr.getAddress());
+	vector<Node> newHRO = getHRO(&memberNode->addr);
 
-	// Vectors of nodes to send creates to
-	vector<Address>*cvec = findNewNeighbors(&hasMyReplicas, &newReplicaList);
+	// Compare newHMR to hasMyReplicas, if they are the same then cvec is empty
+	// Otherwise, cvec has Addresses of nodes that are in newHMR but not hasMyReplicas
+	// These nodes need to replicate the keys for this node
+	vector<Address>* cvec = findNewNeighbors(&hasMyReplicas, &newHMR);
+	vector<Address>* dvec = findNewNeighbors(&haveReplicasOf, &newHRO);
 
+	cout << "Sending All Keys to Nodes: " << endl;
+	for(int k = 0; k< cvec->size(); k++){
+		cout << (*cvec)[k].getAddress() << endl;
+	}
+	cout << endl;
+	bool sendCreate = !cvec->empty();
+	bool tryDelete  = !dvec->empty();
+	
+	size_t lb, ub;
+	if(tryDelete){
+		getHashBounds(&lb, &ub);
+		cout << "Attemping to delete: lb =  " << lb << " ub = " << ub << endl;
+	}
+	else{
+		cout << "No delete neessary... " << endl;
+	}
+	
 	map<string, string>::iterator hIt;
 	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by instructors... 
 	// Only iterate over the hash table if there are nodes to send messages to
-	if(!cvec->empty()){	
-		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); hIt++){
+	if(sendCreate || tryDelete){	
+		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); ){
+			if(tryDelete){
+				size_t curr = hashFunction(hIt->first);
+				// Check for deletion
+				if(curr <= lb || curr > ub){
+					//Iterator invalidated
+					cout << memberNode->addr.getAddress() << "deleting key " << hIt->first << endl;
+					hIt = ht->hashTable.erase(hIt);
+					continue;
+				}
+			}
 			// Update the messages key and values
-			msg.key = hIt->first;
-			msg.value = hIt->second;
-			// Send the message to everyone who should have the key
-			for(int i = 0; i < cvec->size(); i++){
-				sendMessage( &((*cvec)[i] ), &msg);	
+			if(sendCreate){
+				msg.key = hIt->first;
+				msg.value = hIt->second;
+				// Send the message to everyone who should have the key
+				for(int i = 0; i < cvec->size(); i++){
+					sendMessage( &((*cvec)[i] ), &msg);	
+				}
+			}
+			// Go to next element
+			hIt++;
+		}
+	}
+
+	hasMyReplicas  = newHMR;
+	haveReplicasOf = newHRO; 
+	// Clean up memory
+	delete cvec;
+	delete dvec;
+}
+
+void MP2Node::getHashBounds(size_t* lb, size_t* ub){
+	//TODO: Make this binary search instead of linear 
+	int j;
+	bool found = false;
+	for(j = 0; j < ring.size(); j++){
+		if(ring[j].nodeAddress == memberNode->addr){
+			found = true;
+			break;
+		}
+	}
+	if(!found) {cout << "NODE NOT FOUND IN RING " << endl;}
+	// Compute lower bound on hashes
+	j-=NUM_REPLICAS;
+	// Deal with wrap around
+	if(j < 0 ) {
+		j = ring.size() + j;
+	}
+	*lb = std::min(hashFunction(memberNode->addr.getAddress()), ring[j].nodeHashCode);
+	*ub = std::max(hashFunction(memberNode->addr.getAddress()), ring[j].nodeHashCode);
+}
+
+/* HRO = haveReplicasOf */
+vector<Node> MP2Node::getHRO(Address* addr){
+	size_t pos = hashFunction(addr->getAddress());
+	vector<Node> newHRO;
+	if(ring.size() >=3){
+		for(int i = 1; i<ring.size(); i++){
+			if(pos == ring.at(i).getHashCode()){
+				for(int count = 0; count < NUM_REPLICAS; count++){
+					newHRO.emplace_back(ring.at(i));	
+					i--;
+					if(i < 0){
+						i = ring.size()-1;
+					}
+				}
+				
 			}
 		}
 	}
-	// Clean up memory
+	return newHRO;
 
-	hasMyReplicas = newReplicaList;
-	delete cvec;
 }
 
 // Returns a vector of addresses of nodes in newList but not in oldList

@@ -121,6 +121,8 @@ public:
 
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
+	vector<Node> getHRO(Address* addr);
+	void getHashBounds(size_t* lb, size_t* ub);
 
 	// server
 	bool createKeyValue(string key, string value, ReplicaType replica);
@@ -132,6 +134,8 @@ public:
 	void stabilizationProtocol();
 
 	// logging methods
+	void printRing(void);
+	void printHashTable(void);
 	string type2string(MessageType type);
 	void logAction(MessageType type, int tid, bool isCoord, string key, string value, bool status);
 	~MP2Node();

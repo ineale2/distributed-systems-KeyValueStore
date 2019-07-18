@@ -38,7 +38,7 @@ static const char alphanum[] =
 #define FIRST_FAIL_TIME 25
 #define LAST_FAIL_TIME 10
 #define RF 3
-#define NUMBER_OF_INSERTS 2  
+#define NUMBER_OF_INSERTS 1  
 #define KEY_LENGTH 5
 
 /**
