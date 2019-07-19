@@ -22,7 +22,7 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
 	ht = new HashTable();
 	this->memberNode->addr = *address;
 	this->last_seq = INIT_SEQ;
-	this->hasMyReplicas = findNodes(address->getAddress());
+	this->hasMyReplicas = getHMR(&memberNode->addr);
 }
 
 /**
@@ -59,12 +59,19 @@ void MP2Node::updateRing() {
 	if(last_seq == memberNode->heartbeat){
 		return;
 	}
-	
+	// If this is the first time that stabilization procol was called, then update HMR and HRO
+	// Stabilization procotol depends on these being non-empty
+	if(hasMyReplicas.empty()){
+		hasMyReplicas  = getHMR(&memberNode->addr);
+	}	
+	if(haveReplicasOf.empty()){
+		haveReplicasOf = getHRO(&memberNode->addr);
+	}
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
 	
-	cout << "OLD RING" << endl;
-	printRing();
+	//cout << "OLD RING" << endl;
+	//printRing();
 	
 	ring = getMembershipList();
 
@@ -73,8 +80,8 @@ void MP2Node::updateRing() {
 
 	// Print membership list
 	
-	cout << "NEW RING" << endl;
-	printRing();
+	//cout << "NEW RING" << endl;
+	//printRing();
 	// Run stabilization protocol if the hash table size is greater than zero and if there has been a changed in the ring
 	if(!ht->isEmpty()){
 		stabilizationProtocol();
@@ -565,18 +572,40 @@ void MP2Node::stabilizationProtocol() {
 	//To do that, need a get distance in ring function. Only send create message to closest node if both are new, for example
 	// Get the new hasMyReplicas array
 	cout << endl << "Stabilization Protocol: " << memberNode->addr.getAddress() << endl;
-	vector<Node> newHMR = findNodes(memberNode->addr.getAddress());
+	vector<Node> newHMR = getHMR(&memberNode->addr);
 	vector<Node> newHRO = getHRO(&memberNode->addr);
 
 	// Compare newHMR to hasMyReplicas, if they are the same then cvec is empty
 	// Otherwise, cvec has Addresses of nodes that are in newHMR but not hasMyReplicas
 	// These nodes need to replicate the keys for this node
+	int k;
+	cout << "hasMyReplicas: ";
+	for(k = 0; k < hasMyReplicas.size(); k++){
+		cout << hasMyReplicas[k].nodeAddress.getAddress() << " ";
+	}
+	cout << endl;
+	cout << "newHMR       : ";
+	for(k = 0; k < newHMR.size(); k++){
+		cout << newHMR[k].nodeAddress.getAddress() << " ";
+	}
+	cout << endl;
 	vector<Address>* cvec = findNewNeighbors(&hasMyReplicas, &newHMR);
 	vector<Address>* dvec = findNewNeighbors(&haveReplicasOf, &newHRO);
 
 	cout << "Sending All Keys to Nodes: " << endl;
-	for(int k = 0; k< cvec->size(); k++){
+	for(k = 0; k< cvec->size(); k++){
 		cout << (*cvec)[k].getAddress() << endl;
+	}
+	cout << endl;
+
+	cout << "haveReplicasOf: ";
+	for(k = 0; k < haveReplicasOf.size(); k++){
+		cout << haveReplicasOf[k].nodeAddress.getAddress() << " ";
+	}
+	cout << endl;
+	cout << "newHRO        : ";
+	for(k = 0; k < newHRO.size(); k++){
+		cout << newHRO[k].nodeAddress.getAddress() << " ";
 	}
 	cout << endl;
 	bool sendCreate = !cvec->empty();
@@ -596,7 +625,7 @@ void MP2Node::stabilizationProtocol() {
 	// Only iterate over the hash table if there are nodes to send messages to
 	if(sendCreate || tryDelete){	
 		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); ){
-			if(tryDelete){
+			if(tryDelete && false){
 				size_t curr = hashFunction(hIt->first);
 				// Check for deletion
 				if(curr <= lb || curr > ub){
@@ -609,8 +638,10 @@ void MP2Node::stabilizationProtocol() {
 			// Update the messages key and values
 			if(sendCreate){
 				msg.key = hIt->first;
-				msg.value = hIt->second;
+				Entry e(hIt->second);
+				msg.value = e.value;
 				// Send the message to everyone who should have the key
+				// TODO: Fix logic! Don't send to your replicas, send to replicas for this key
 				for(int i = 0; i < cvec->size(); i++){
 					sendMessage( &((*cvec)[i] ), &msg);	
 				}
@@ -648,8 +679,43 @@ void MP2Node::getHashBounds(size_t* lb, size_t* ub){
 	*ub = std::max(hashFunction(memberNode->addr.getAddress()), ring[j].nodeHashCode);
 }
 
+
+vector<Node> MP2Node::getHMR(Address* addr){
+	vector<Node> newHMR;
+	//cout << "getHMR: " << endl;
+	for(int i = 0; i < ring.size(); i++){
+		//cout << "ring(i) = " << ring.at(i).nodeAddress.getAddress() << " addr = " << addr->getAddress() << endl;
+		if(ring.at(i).nodeAddress == *addr){
+			//cout << "found!" << endl;
+			for(int count = 0; count < NUM_REPLICAS; count++){
+				newHMR.emplace_back(ring.at(i));	
+				i++;
+				if(i >= ring.size()){
+					i = 0;
+				}
+			}
+			break;
+		}
+	}
+	return newHMR;
+}
+
 /* HRO = haveReplicasOf */
 vector<Node> MP2Node::getHRO(Address* addr){
+	vector<Node> newHRO;
+	for(int i = 0; i < ring.size(); i++){
+		if(ring.at(i).nodeAddress == *addr){
+			for(int count = 0; count < NUM_REPLICAS; count++){
+				newHRO.emplace_back(ring.at(i));	
+				i--;
+				if(i < 0){
+					i = ring.size()-1;
+				}
+			}
+			break;
+		}
+	}
+	/*
 	size_t pos = hashFunction(addr->getAddress());
 	vector<Node> newHRO;
 	if(ring.size() >=3){
@@ -666,6 +732,7 @@ vector<Node> MP2Node::getHRO(Address* addr){
 			}
 		}
 	}
+	*/
 	return newHRO;
 
 }

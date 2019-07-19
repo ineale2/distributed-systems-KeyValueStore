@@ -122,6 +122,7 @@ public:
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
 	vector<Node> getHRO(Address* addr);
+	vector<Node> getHMR(Address* addr);
 	void getHashBounds(size_t* lb, size_t* ub);
 
 	// server
