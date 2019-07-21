@@ -569,94 +569,58 @@ int MP2Node::enqueueWrapper(void *env, char *buff, int size) {
  */
 void MP2Node::stabilizationProtocol() {
 	//TODO: Create more efficient implentation that, in the case of one failure, only sends messages from one remaining replica
-	//To do that, need a get distance in ring function. Only send create message to closest node if both are new, for example
-	// Get the new hasMyReplicas array
 	cout << endl << "Stabilization Protocol: " << memberNode->addr.getAddress() << endl;
-	vector<Node> newHMR = getHMR(&memberNode->addr);
-	vector<Node> newHRO = getHRO(&memberNode->addr);
 
-	// Compare newHMR to hasMyReplicas, if they are the same then cvec is empty
-	// Otherwise, cvec has Addresses of nodes that are in newHMR but not hasMyReplicas
-	// These nodes need to replicate the keys for this node
-	int k;
-	cout << "hasMyReplicas: ";
-	for(k = 0; k < hasMyReplicas.size(); k++){
-		cout << hasMyReplicas[k].nodeAddress.getAddress() << " ";
-	}
-	cout << endl;
-	cout << "newHMR       : ";
-	for(k = 0; k < newHMR.size(); k++){
-		cout << newHMR[k].nodeAddress.getAddress() << " ";
-	}
-	cout << endl;
-	vector<Address>* cvec = findNewNeighbors(&hasMyReplicas, &newHMR);
-	vector<Address>* dvec = findNewNeighbors(&haveReplicasOf, &newHRO);
+	updateNeighbors();
 
-	cout << "Sending All Keys to Nodes: " << endl;
-	for(k = 0; k< cvec->size(); k++){
-		cout << (*cvec)[k].getAddress() << endl;
-	}
-	cout << endl;
-
-	cout << "haveReplicasOf: ";
-	for(k = 0; k < haveReplicasOf.size(); k++){
-		cout << haveReplicasOf[k].nodeAddress.getAddress() << " ";
-	}
-	cout << endl;
-	cout << "newHRO        : ";
-	for(k = 0; k < newHRO.size(); k++){
-		cout << newHRO[k].nodeAddress.getAddress() << " ";
-	}
-	cout << endl;
-	bool sendCreate = !cvec->empty();
-	bool tryDelete  = !dvec->empty();
-	
-	size_t lb, ub;
-	if(tryDelete){
-		getHashBounds(&lb, &ub);
-		cout << "Attemping to delete: lb =  " << lb << " ub = " << ub << endl;
-	}
-	else{
-		cout << "No delete neessary... " << endl;
-	}
-	
 	map<string, string>::iterator hIt;
-	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by instructors... 
-	// Only iterate over the hash table if there are nodes to send messages to
-	if(sendCreate || tryDelete){	
+	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by template code that cannot be changed for grading 
+	if(isNew != NULL){
 		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); ){
-			if(tryDelete && false){
-				size_t curr = hashFunction(hIt->first);
-				// Check for deletion
-				if(curr <= lb || curr > ub){
-					//Iterator invalidated
-					cout << memberNode->addr.getAddress() << "deleting key " << hIt->first << endl;
-					hIt = ht->hashTable.erase(hIt);
-					continue;
-				}
+			Entry e(hIt->second);
+			msg.key = hIt->first;
+			// Send an update message to any new neighbor giving it the key, value, and replica type
+			switch(e.replica){
+				case: PRIMARY{
+					if(neighbors[3].isNew()){
+						sendUpdateMessage(neighbors[3], msg, SECONDARY);
+					}
+					if(neighbors[4].isNew()){
+						sendUpdateMessage(neighbors[4], msg, TERTIARY);
+					}
+					break;
+				} 
+				case: SECONDARY{
+					if(neighbors[2].isNew()){
+						sendUpdateMessage(neighbors[2], msg, PRIMARY);
+					}
+					if(neighbors[3].isNew()){
+						sendUpdateMessage(neighbors[3], msg, TERTIARY);
+					}
+					break;
+				} 
+				case: TERTIARY{ 
+					if(neighbors[1].isNew()){
+						sendUpdateMessage(neighbors[1], msg, PRIMARY);
+					}
+					if(neighbors[2].isNew()){
+						sendUpdateMessage(neighbors[2], msg, SECONDARY);
+					}
+					break;
+				} 
 			}
-			// Update the messages key and values
-			if(sendCreate){
-				msg.key = hIt->first;
-				Entry e(hIt->second);
-				msg.value = e.value;
-				// Send the message to everyone who should have the key
-				// TODO: Fix logic! Don't send to your replicas, send to replicas for this key
-				for(int i = 0; i < cvec->size(); i++){
-					sendMessage( &((*cvec)[i] ), &msg);	
-				}
-			}
-			// Go to next element
+
 			hIt++;
 		}
 	}
 
-	hasMyReplicas  = newHMR;
-	haveReplicasOf = newHRO; 
-	// Clean up memory
-	delete cvec;
-	delete dvec;
 }
+
+void MP2Node::sendUpdateMessage(Neighbor const &n, Entry* e, Message* msg, ReplicaType r){
+	e->replica = r;
+	msg->value = e.toString();
+	sendMessage(&n.getAddress(), msg);
+} 
 
 void MP2Node::getHashBounds(size_t* lb, size_t* ub){
 	//TODO: Make this binary search instead of linear 
@@ -679,85 +643,27 @@ void MP2Node::getHashBounds(size_t* lb, size_t* ub){
 	*ub = std::max(hashFunction(memberNode->addr.getAddress()), ring[j].nodeHashCode);
 }
 
-
-vector<Node> MP2Node::getHMR(Address* addr){
-	vector<Node> newHMR;
-	//cout << "getHMR: " << endl;
-	for(int i = 0; i < ring.size(); i++){
-		//cout << "ring(i) = " << ring.at(i).nodeAddress.getAddress() << " addr = " << addr->getAddress() << endl;
-		if(ring.at(i).nodeAddress == *addr){
-			//cout << "found!" << endl;
-			for(int count = 0; count < NUM_REPLICAS; count++){
-				newHMR.emplace_back(ring.at(i));	
-				i++;
-				if(i >= ring.size()){
-					i = 0;
+void MP2Node::updateNeighbors(){
+	int pos;
+	for(int i = 0; i < ring.size(); i+++){
+		pos = (i + NUM_REPLICAS - 1)%ring.size();
+		if(ring[pos].nodeAddress == memberNode->addr){
+			for(int count = 0; count < 2*(NUM_REPLICAS-1);){
+				if(count == NUM_REPLICAS){
+					continue; //Skip over yourself
 				}
+				if(is new neightbor){
+				mark neighbor as new
+				neighbors[count].setAddress(ring[pos].nodeAddress)
+				}	
+				count++;
+				i = (i + 1)%ring.size();
 			}
 			break;
 		}
 	}
-	return newHMR;
 }
 
-/* HRO = haveReplicasOf */
-vector<Node> MP2Node::getHRO(Address* addr){
-	vector<Node> newHRO;
-	for(int i = 0; i < ring.size(); i++){
-		if(ring.at(i).nodeAddress == *addr){
-			for(int count = 0; count < NUM_REPLICAS; count++){
-				newHRO.emplace_back(ring.at(i));	
-				i--;
-				if(i < 0){
-					i = ring.size()-1;
-				}
-			}
-			break;
-		}
-	}
-	/*
-	size_t pos = hashFunction(addr->getAddress());
-	vector<Node> newHRO;
-	if(ring.size() >=3){
-		for(int i = 1; i<ring.size(); i++){
-			if(pos == ring.at(i).getHashCode()){
-				for(int count = 0; count < NUM_REPLICAS; count++){
-					newHRO.emplace_back(ring.at(i));	
-					i--;
-					if(i < 0){
-						i = ring.size()-1;
-					}
-				}
-				
-			}
-		}
-	}
-	*/
-	return newHRO;
-
-}
-
-// Returns a vector of addresses of nodes in newList but not in oldList
-vector<Address>* MP2Node::findNewNeighbors(vector<Node>* oldList, vector<Node>* newList){
-	vector<Address>* cvec = new vector<Address>;
-	// Would like to use an unordered_set or unordred_map, but need to define operator() for Node class to return hash, and also operator ==, but cannot change Node.h for grading...
-	// Using an unordered_set will make this O(n), but unfortunatley this must be O(n^2)
-
-	bool found;
-	for(int i =	 0; i < newList->size(); i++){
-		found = false;
-		for(int j = 0; j <oldList->size(); j++){
-			if((*newList)[i].nodeAddress == (*oldList)[j].nodeAddress){
-				found = true;
-				break;
-			}
-		}
-		if(!found){
-			cvec->push_back((*newList)[i].nodeAddress);
-		}
-	}
-	return cvec;
-}
 void MP2Node::sendMessage(Address *toAddr, Message* msg){
 	emulNet->ENsend(&memberNode->addr, toAddr, msg->toString());
 }

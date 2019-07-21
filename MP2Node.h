@@ -26,6 +26,33 @@
 #define T_CLOSE 25
 #define INIT_SEQ -1
 
+class Neighbor{
+private:
+	Address addr;	
+	bool 	isNew;
+public: 
+	Address getAddress(){
+		return addr;
+	}
+	void setAddress(Address const& a){
+		addr  = a;
+	}	
+	void setNew(bool i){
+		isNew = i;
+	}
+	void isNew(){
+		return isNew;
+	}
+	Neighbor(Addrress a, bool n) : addr(a), isNew(n){
+	}
+	bool operator ==(const Neighbor &other){
+		return other.addr == addr;	
+	}
+
+	
+
+}
+
 class Transaction{
 private:
 	int				id;    		// Transaction ID
@@ -65,10 +92,8 @@ public:
  */
 class MP2Node {
 private:
-	// Vector holding the next two neighbors in the ring who have my replicas
-	vector<Node> hasMyReplicas;
-	// Vector holding the previous two neighbors in the ring whose replicas I have
-	vector<Node> haveReplicasOf;
+	// Vector of neighboring Nodes
+	vector<Neighbor> neighbors;
 	// Ring
 	vector<Node> ring;
 	// Hash Table
@@ -84,6 +109,8 @@ private:
 	// Transactions that are currently open at this node 
 	unordered_map<int, Transaction> tmap;
 
+	// 
+
 	// Last sequence number from membership protocol, used to check if there has been a change
 	int last_seq;
 public:
@@ -96,7 +123,7 @@ public:
 	void updateRing();
 	vector<Node> getMembershipList();
 	size_t hashFunction(string key);
-	vector<Address>* findNewNeighbors(vector<Node>*, vector<Node>*);
+	vector<Address>* compareNeighbors(vector<Node>*, vector<Node>*);
 
 	// client side CRUD APIs
 	void clientCreate(string key, string value);
@@ -121,8 +148,6 @@ public:
 
 	// find the addresses of nodes that are responsible for a key
 	vector<Node> findNodes(string key);
-	vector<Node> getHRO(Address* addr);
-	vector<Node> getHMR(Address* addr);
 	void getHashBounds(size_t* lb, size_t* ub);
 
 	// server
