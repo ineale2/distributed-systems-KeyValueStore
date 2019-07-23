@@ -29,29 +29,32 @@
 class Neighbor{
 private:
 	Address addr;	
-	bool 	isNew;
+	bool 	newNeighbor;
 public: 
-	Address getAddress(){
+	Address getAddress() const{
 		return addr;
 	}
 	void setAddress(Address const& a){
 		addr  = a;
 	}	
 	void setNew(bool i){
-		isNew = i;
+		newNeighbor = i;
 	}
-	void isNew(){
-		return isNew;
+	bool isNew() const{
+		return newNeighbor;
 	}
-	Neighbor(Addrress a, bool n) : addr(a), isNew(n){
+	Neighbor(Address a, bool n) : addr(a), newNeighbor(n){
+	}
+	Neighbor(): addr(), newNeighbor(false){
+
 	}
 	bool operator ==(const Neighbor &other){
-		return other.addr == addr;	
+		return addr == other.addr;	
 	}
 
 	
 
-}
+};
 
 class Transaction{
 private:
@@ -109,8 +112,6 @@ private:
 	// Transactions that are currently open at this node 
 	unordered_map<int, Transaction> tmap;
 
-	// 
-
 	// Last sequence number from membership protocol, used to check if there has been a change
 	int last_seq;
 public:
@@ -123,7 +124,7 @@ public:
 	void updateRing();
 	vector<Node> getMembershipList();
 	size_t hashFunction(string key);
-	vector<Address>* compareNeighbors(vector<Node>*, vector<Node>*);
+	void updateNeighbors();
 
 	// client side CRUD APIs
 	void clientCreate(string key, string value);
@@ -135,11 +136,13 @@ public:
 	bool recvLoop();
 	static int enqueueWrapper(void *env, char *buff, int size);
 
+	// Message sending wrappers
 	void sendMessage(Address *toAddr, Message* msg);
 	void sendMsgToReplicas(string* key, Message* msg);
 	void sendCreateToReplicas(string* key, Message* msg);
-
+	void sendStabilizationMessage(Neighbor const &n, Entry const &e, Message* msg, ReplicaType r);
 	void sendREPLY(int transID, Address* toAddr, bool status);
+
 	// handle messages from receiving queue
 	void checkMessages();
 

@@ -22,7 +22,9 @@ MP2Node::MP2Node(Member *memberNode, Params *par, EmulNet * emulNet, Log * log, 
 	ht = new HashTable();
 	this->memberNode->addr = *address;
 	this->last_seq = INIT_SEQ;
-	this->hasMyReplicas = getHMR(&memberNode->addr);
+	for(int i = 0; i < 2*(NUM_REPLICAS-1); i++){
+		neighbors.emplace_back(Neighbor());
+	}
 }
 
 /**
@@ -58,14 +60,6 @@ void MP2Node::updateRing() {
 	// Compare last_seq to heartbeat to determine if there was a change
 	if(last_seq == memberNode->heartbeat){
 		return;
-	}
-	// If this is the first time that stabilization procol was called, then update HMR and HRO
-	// Stabilization procotol depends on these being non-empty
-	if(hasMyReplicas.empty()){
-		hasMyReplicas  = getHMR(&memberNode->addr);
-	}	
-	if(haveReplicasOf.empty()){
-		haveReplicasOf = getHRO(&memberNode->addr);
 	}
 	// Store sequence number for next time
 	last_seq = memberNode->heartbeat;
@@ -314,7 +308,10 @@ void MP2Node::checkMessages() {
 
 		Message msg(message);
 		if(msg.transID == STABILIZATION_TID){
+			// This should be another case in the switch statement, but message type as defined in common.h cannot be changed for grading
 			cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got STAB CREATE for key " << msg.key << " from " << msg.fromAddr.getAddress() << endl;
+			status = updateKeyValue(msg.key, msg.value, msg.replica);
+			
 		}
 		switch(msg.type){
 			case CREATE:
@@ -573,38 +570,49 @@ void MP2Node::stabilizationProtocol() {
 
 	updateNeighbors();
 
+	// Check if any of the neighbors are new
+	bool foundNewNeighbor = false;
+	for(int k = 0; k < neighbors.size(); k++){
+		if(neighbors[k].isNew()){
+			foundNewNeighbor = true;
+			break;
+		}
+	}
+	
+	
+
 	map<string, string>::iterator hIt;
 	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by template code that cannot be changed for grading 
-	if(isNew != NULL){
+	if(foundNewNeighbor){
 		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); ){
 			Entry e(hIt->second);
 			msg.key = hIt->first;
-			// Send an update message to any new neighbor giving it the key, value, and replica type
+			// Send an stabilization msg to any new neighbor giving it the key, value, and replica type
 			switch(e.replica){
-				case: PRIMARY{
+				case PRIMARY:{
 					if(neighbors[3].isNew()){
-						sendUpdateMessage(neighbors[3], msg, SECONDARY);
+						sendStabilizationMessage(neighbors[3], e, &msg, SECONDARY);
 					}
 					if(neighbors[4].isNew()){
-						sendUpdateMessage(neighbors[4], msg, TERTIARY);
+						sendStabilizationMessage(neighbors[4], e, &msg, TERTIARY);
 					}
 					break;
 				} 
-				case: SECONDARY{
+				case SECONDARY:{
 					if(neighbors[2].isNew()){
-						sendUpdateMessage(neighbors[2], msg, PRIMARY);
+						sendStabilizationMessage(neighbors[2], e, &msg, PRIMARY);
 					}
 					if(neighbors[3].isNew()){
-						sendUpdateMessage(neighbors[3], msg, TERTIARY);
+						sendStabilizationMessage(neighbors[3], e, &msg, TERTIARY);
 					}
 					break;
 				} 
-				case: TERTIARY{ 
+				case TERTIARY:{ 
 					if(neighbors[1].isNew()){
-						sendUpdateMessage(neighbors[1], msg, PRIMARY);
+						sendStabilizationMessage(neighbors[1], e, &msg, PRIMARY);
 					}
 					if(neighbors[2].isNew()){
-						sendUpdateMessage(neighbors[2], msg, SECONDARY);
+						sendStabilizationMessage(neighbors[2], e, &msg, SECONDARY);
 					}
 					break;
 				} 
@@ -616,10 +624,11 @@ void MP2Node::stabilizationProtocol() {
 
 }
 
-void MP2Node::sendUpdateMessage(Neighbor const &n, Entry* e, Message* msg, ReplicaType r){
-	e->replica = r;
-	msg->value = e.toString();
-	sendMessage(&n.getAddress(), msg);
+void MP2Node::sendStabilizationMessage(Neighbor const &n, Entry const &e, Message* msg, ReplicaType r){
+	msg->value = e.value;
+	msg->replica = r;
+	Address a = n.getAddress();
+	sendMessage(&a, msg);
 } 
 
 void MP2Node::getHashBounds(size_t* lb, size_t* ub){
@@ -644,24 +653,38 @@ void MP2Node::getHashBounds(size_t* lb, size_t* ub){
 }
 
 void MP2Node::updateNeighbors(){
+	cout << "Previous Neighbors: " << endl;
+	for(int k = 0; k < neighbors.size(); k++){
+		cout << neighbors[k].getAddress().getAddress() << "(" << neighbors[k].isNew() << ") ";
+	}
+	cout << endl;
 	int pos;
-	for(int i = 0; i < ring.size(); i+++){
+	for(int i = 0; i < ring.size(); i++){
 		pos = (i + NUM_REPLICAS - 1)%ring.size();
 		if(ring[pos].nodeAddress == memberNode->addr){
-			for(int count = 0; count < 2*(NUM_REPLICAS-1);){
-				if(count == NUM_REPLICAS){
+			for(int count = 0; count < 2*(NUM_REPLICAS-1); count++){
+				if(ring[i].nodeAddress == memberNode->addr){
+					i = (i + 1)%ring.size();
 					continue; //Skip over yourself
 				}
-				if(is new neightbor){
-				mark neighbor as new
-				neighbors[count].setAddress(ring[pos].nodeAddress)
+				// Test if the neighbor is new and then set its address
+				if(neighbors[count].getAddress() == ring[i].nodeAddress){
+					neighbors[count].setNew(false);
 				}	
-				count++;
+				else{
+					neighbors[count].setNew(true);
+					neighbors[count].setAddress(ring[i].nodeAddress);
+				}
 				i = (i + 1)%ring.size();
 			}
 			break;
 		}
 	}
+	cout << "Current Neighbors : " << endl;
+	for(int k = 0; k < neighbors.size(); k++){
+		cout << neighbors[k].getAddress().getAddress() << "(" << neighbors[k].isNew() << ") ";
+	}
+	cout << endl;
 }
 
 void MP2Node::sendMessage(Address *toAddr, Message* msg){
