@@ -139,7 +139,7 @@ public:
 	// Message sending wrappers
 	void sendMessage(Address *toAddr, Message* msg);
 	void sendMsgToReplicas(string* key, Message* msg);
-	void sendCreateToReplicas(string* key, Message* msg);
+	void sendMsgToReplicaTypes(string* key, Message* msg);
 	void sendStabilizationMessage(Neighbor const &n, Entry const &e, Message* msg, ReplicaType r);
 	void sendREPLY(int transID, Address* toAddr, bool status);
 
