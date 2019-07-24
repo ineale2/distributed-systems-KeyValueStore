@@ -311,7 +311,7 @@ void MP2Node::checkMessages() {
 		if(msg.transID == STABILIZATION_TID){
 			// This should be another case in the switch statement, but message type as defined in common.h cannot be changed for grading
 			// If the update fails, then try to create
-			cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got STAB CREATE for key " << msg.key << " from " << msg.fromAddr.getAddress() << endl;
+			//cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got STAB CREATE for key " << msg.key << " from " << msg.fromAddr.getAddress() << endl;
 			status = updateKeyValue(msg.key, msg.value, msg.replica);
 
 			if(!status){
@@ -357,7 +357,7 @@ void MP2Node::checkMessages() {
 			case UPDATE:
 			{
 				// Make the update
-				cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " updateKey("<<msg.key<<") = " << msg.value << endl;
+				//cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " updateKey("<<msg.key<<") = " << msg.value << endl;
 				status = updateKeyValue(msg.key, msg.value, msg.replica);
 				// Reply to message
 				sendREPLY(msg.transID, &msg.fromAddr, status); 
@@ -384,7 +384,7 @@ void MP2Node::checkMessages() {
 					numReplys = it->second.addReply(msg.success);
 					// If all replys have been recieved, then close the transaction and then delete it.
 					if(numReplys == NUM_REPLICAS){
-						cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got all replys for transID = " << msg.transID << endl;
+//						cout << par->getcurrtime() << " " << memberNode->addr.getAddress() << " got all replys for transID = " << msg.transID << endl;
 						val = it->second.close(&status);
 						logAction(it->second.getType(), it->second.getID(), true, it->second.getKey(), it->second.getValue(), status); 
 						tmap.erase(it);
@@ -442,9 +442,11 @@ void MP2Node::checkMessages() {
 			it++;
 		}
 	}
+	/*
 	if(currtime == 600 || currtime == 174 || currtime == 224){
 		printHashTable();
 	}
+	*/
 }
 
 void MP2Node::printHashTable(){
@@ -593,53 +595,53 @@ void MP2Node::stabilizationProtocol() {
 
 	map<string, string>::iterator hIt;
 	Message msg(STABILIZATION_TID, memberNode->addr, CREATE, "", ""); //Right constructor not provided by template code that cannot be changed for grading 
-	cout << endl << par->getcurrtime() << " " << memberNode->addr.getAddress() << " stabilizing hash table " << endl;
+	//cout << endl << par->getcurrtime() << " " << memberNode->addr.getAddress() << " stabilizing hash table " << endl;
 	if(foundNewNeighbor){
 		for(hIt = ht->hashTable.begin(); hIt != ht->hashTable.end(); ){
 			Entry e(hIt->second);
 			msg.key = hIt->first;
 			// Send an stabilization msg to any new neighbor giving it the key, value, and replica type
-			cout << "Stabilization: key = " << hIt->first << " type = " << e.replica;
+			//cout << "Stabilization: key = " << hIt->first << " type = " << e.replica;
 			switch(e.replica){
 				case PRIMARY:{
 					if(neighbors[2].isNew()){
 						sendStabilizationMessage(neighbors[2], e, &msg, SECONDARY);
-						cout << ", sending to new secondary (case 1)["<<neighbors[2].getAddress().getAddress() << "]";
+						//cout << ", sending to new secondary (case 1)["<<neighbors[2].getAddress().getAddress() << "]";
 					}
 					if(neighbors[3].isNew()){
 						sendStabilizationMessage(neighbors[3], e, &msg, TERTIARY);
-						cout << ", sending to new tertiary (case 2)["<<neighbors[3].getAddress().getAddress() << "]";
+						//cout << ", sending to new tertiary (case 2)["<<neighbors[3].getAddress().getAddress() << "]";
 					}
 					break;
 				} 
 				case SECONDARY:{
 					if(neighbors[1].isNew()){
 						sendStabilizationMessage(neighbors[1], e, &msg, PRIMARY);
-						cout << ", sending to new primary  (case 3)["<<neighbors[1].getAddress().getAddress() << "]";	
+						//cout << ", sending to new primary  (case 3)["<<neighbors[1].getAddress().getAddress() << "]";	
 					}
 					if(neighbors[2].isNew()){
 						sendStabilizationMessage(neighbors[2], e, &msg, TERTIARY);
-						cout << ", sending to new tertiary (case 4)["<<neighbors[2].getAddress().getAddress() << "]";
+						//cout << ", sending to new tertiary (case 4)["<<neighbors[2].getAddress().getAddress() << "]";
 					}
 					break;
 				} 
 				case TERTIARY:{ 
 					if(neighbors[0].isNew()){
 						sendStabilizationMessage(neighbors[0], e, &msg, PRIMARY);
-						cout << ", sending to new primary  (case 5)["<<neighbors[0].getAddress().getAddress() << "]";
+						//cout << ", sending to new primary  (case 5)["<<neighbors[0].getAddress().getAddress() << "]";
 					}
 					if(neighbors[1].isNew()){
 						sendStabilizationMessage(neighbors[1], e, &msg, SECONDARY);
-						cout << ", sending to new secondary (case 6)["<<neighbors[1].getAddress().getAddress() << "]";
+						//cout << ", sending to new secondary (case 6)["<<neighbors[1].getAddress().getAddress() << "]";
 					}
 					break;
 				} 
 			}
-			cout << endl;
+			//cout << endl;
 
 			hIt++;
 		}
-		cout << endl;
+		//cout << endl;
 	}
 
 }
@@ -673,13 +675,14 @@ void MP2Node::getHashBounds(size_t* lb, size_t* ub){
 }
 
 void MP2Node::updateNeighbors(){
-	
+/*	
 	cout << endl << "Previous Neighbors: " << endl;
 
 	for(int k = 0; k < neighbors.size(); k++){
 		cout << neighbors[k].getAddress().getAddress() << "(" << neighbors[k].isNew() << ") ";
 	}
 	cout << endl;
+*/
 	int pos;
 	for(int i = 0; i < ring.size(); i++){
 		pos = (i + NUM_REPLICAS - 1)%ring.size();
@@ -703,12 +706,13 @@ void MP2Node::updateNeighbors(){
 			break;
 		}
 	}
-
+/*
 	cout << "Current Neighbors : " << endl;
 	for(int k = 0; k < neighbors.size(); k++){
 		cout << neighbors[k].getAddress().getAddress() << "(" << neighbors[k].isNew() << ") ";
 	}
 	cout << endl;
+*/
 }
 
 void MP2Node::sendMessage(Address *toAddr, Message* msg){

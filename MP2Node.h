@@ -23,7 +23,7 @@
 
 #define STABILIZATION_TID -1
 #define NUM_REPLICAS 3
-#define T_CLOSE 25
+#define T_CLOSE 10
 #define INIT_SEQ -1
 
 class Neighbor{
